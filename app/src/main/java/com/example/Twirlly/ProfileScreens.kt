@@ -286,9 +286,15 @@ fun EditProfileScreen(vm: AppViewModel, onBack: () -> Unit) {
         if (u != null) positioning = Pair(u, false)
     }
     val bannerPath = profile.banner
+    var saving by remember { mutableStateOf(false) }
     fun save() {
-        saveError = vm.saveProfile(displayName, name, bio, priv)
-        if (saveError == null) onBack()
+        if (saving) return
+        scope.launch {
+            saving = true
+            saveError = vm.saveProfileCloud(displayName, name, bio, priv)
+            saving = false
+            if (saveError == null) onBack()
+        }
     }
 
     Column(
