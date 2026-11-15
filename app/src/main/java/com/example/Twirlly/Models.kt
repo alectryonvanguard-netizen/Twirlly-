@@ -1,3 +1,4 @@
+
 package com.example.twirlly
 
 import android.app.Application
@@ -43,7 +44,9 @@ data class Video(
     val seriesTitle: String? = null,
     val seriesId: Long? = null,
     val episodeNo: Int = 0,
-    val story: Boolean = false
+    val story: Boolean = false,
+    val cloudId: String? = null,
+    val uid: String? = null
 )
 
 /** Result of typing the kids-mode PIN. */
@@ -123,6 +126,7 @@ private fun Video.toJson(): JSONObject = JSONObject().apply {
     })
     put("images", JSONArray(images)); put("audio", audio ?: ""); put("project", project ?: "")
     put("ser", seriesTitle ?: ""); put("sid", seriesId ?: 0L); put("epn", episodeNo); put("story", story)
+    put("cloudId", cloudId ?: ""); put("uid", uid ?: "")
 }
 
 private fun JSONObject.toVideo(): Video {
@@ -143,7 +147,9 @@ private fun JSONObject.toVideo(): Video {
         seriesTitle = optString("ser", "").takeIf { it.isNotBlank() },
         seriesId = optLong("sid", 0L).takeIf { it != 0L },
         episodeNo = optInt("epn", 0),
-        story = optBoolean("story", false)
+        story = optBoolean("story", false),
+        cloudId = optString("cloudId", "").takeIf { it.isNotBlank() },
+        uid = optString("uid", "").takeIf { it.isNotBlank() }
     )
 }
 
