@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -94,6 +95,8 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
     var premiumOpen by remember { mutableStateOf(false) }
     var insightsOpen by remember { mutableStateOf(false) }
     var confirmOut by remember { mutableStateOf(false) }
+    var deleteStage by remember { mutableIntStateOf(0) }
+    val deleteScope = rememberCoroutineScope()
     var screenTimeOpen by remember { mutableStateOf(false) }
     var verifyOpen by remember { mutableStateOf(false) }
     var rewardsOpen by remember { mutableStateOf(false) }
@@ -192,6 +195,9 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
                 Row3(Icons.Default.Backup, "Back up to a file", "Save your profile and posts", onClick = { createBackup.launch("twirlly-backup.json") })
                 Row3(Icons.Default.Restore, "Restore from a backup", "Pick a backup file", onClick = { restoreBackup.launch(arrayOf("*/*")) })
                 Row3(Icons.AutoMirrored.Filled.ExitToApp, "Log out", "You will be asked to confirm", onClick = { confirmOut = true })
+                if (s.email.isNotBlank() && Auth.provider.isCloud) {
+                    Row3(Icons.Default.DeleteForever, "Delete my account", "Removes your account and everything saved online", onClick = { deleteStage = 1 })
+                }
             }
 
             Section("Notifications")
@@ -302,6 +308,24 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
     legal?.let { LegalDialog(it) { legal = null } }
     if (premiumOpen) PremiumDialog(vm) { premiumOpen = false }
     if (insightsOpen) InsightsDialog(vm) { insightsOpen = false }
+    if (deleteStage == 1) {
+        AlertDialog(
+            onDismissRequest = { deleteStage = 0 },
+            title = { Text("Delete your account?") },
+            text = { Text("This removes your account, username, profile, posts, drafts, stories and settings from Twirlly and from this phone. It cannot be undone.") },
+            confirmButton = { TextButton(onClick = { deleteStage = 2 }) { Text("Continue", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleteStage = 0 }) { Text("Keep my account") } }
+        )
+    }
+    if (deleteStage == 2) {
+        ConfirmIdentityDialog("Confirm it is you", "Delete everything", onBack = { deleteStage = 0 }) {
+            deleteScope.launch {
+                val e = vm.deleteAccountEverywhere()
+                deleteStage = 0
+                toast(e ?: "Your account was deleted")
+            }
+        }
+    }
     if (screenTimeOpen) ScreenTimeDialog(vm) { screenTimeOpen = false }
     if (verifyOpen) VerificationDialog(vm) { verifyOpen = false }
     if (rewardsOpen) RewardsDialog(vm) { rewardsOpen = false }
@@ -323,13 +347,16 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
             confirmButton = { TextButton(onClick = { blockedOpen = false }) { Text("Close") } }
         )
     }
-    if (kidsSetup) SetPinDialog(onDismiss = { kidsSetup = false }) { pin -> vm.setKids(pin); kidsSetup = false }
+    if (kidsSetup) SetPinDialog(
+        onDismiss = { kidsSetup = false },
+        warning = if (s.email.isBlank()) "You are not signed in. Without an account the PIN cannot be recovered if you forget it. Sign in first for safety." else null
+    ) { pin -> vm.setKids(pin); kidsSetup = false }
     if (confirmOut) {
         AlertDialog(
             onDismissRequest = { confirmOut = false },
             title = { Text("Are you sure you want to log out?") },
-            text = { Text("You will go back to the sign-in page. Your posts stay on this phone.") },
-            confirmButton = { TextButton(onClick = { confirmOut = false; vm.signOut() }) { Text("Yes, log out") } },
+            text = { Text(if (s.email.isNotBlank()) "Everything is saved in your account and comes back when you sign in again. This phone will be cleared." else "You are using Twirlly as a guest. Your data on this phone will be deleted.") },
+            confirmButton = { TextButton(onClick = { confirmOut = false; vm.logOut() }) { Text("Yes, log out") } },
             dismissButton = { TextButton(onClick = { confirmOut = false }) { Text("Cancel") } }
         )
     }
