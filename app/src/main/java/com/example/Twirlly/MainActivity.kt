@@ -229,9 +229,7 @@ fun TwirllyApp(vm: AppViewModel) {
         )
     }
     pinAction?.let { act ->
-        PinDialog("Kids mode PIN", onDismiss = { pinAction = null }) { pin ->
-            if (vm.checkPin(pin)) { pinAction = null; act(); true } else false
-        }
+        PinDialog("Kids mode PIN", vm, onDismiss = { pinAction = null }) { pinAction = null; act() }
     }
 }
 
