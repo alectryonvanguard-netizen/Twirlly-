@@ -3,14 +3,27 @@ package com.example.twirlly
 import android.content.Context
 
 /**
- * Sign-in hook. The page is ready; the default provider keeps everything on this phone.
- * To connect your own account system later, create an AuthProvider and set `Auth.provider = YourProvider`.
- * Each function returns null on success, or a message to show the user.
+ * Sign-in hook. Every function returns null on success, or a message to show the user.
+ * With Firebase set up, TwirllyApplication switches this to FirebaseAuthProvider. Without it, LocalAuth keeps
+ * everything on this phone.
  */
 interface AuthProvider {
     suspend fun signIn(email: String, password: String): String?
     suspend fun signUp(email: String, password: String): String?
     suspend fun google(context: Context): String?
+
+    /** True when accounts are online (Firebase). */
+    val isCloud: Boolean get() = false
+    suspend fun sendVerification(): String? = null
+    /** True when the email of the signed-in account is confirmed. Google accounts are always confirmed. */
+    suspend fun isVerified(): Boolean = true
+    suspend fun resetPassword(email: String): String? = "Password reset needs an online account."
+    /** Asks the account owner to prove it is them again: with the password, or with Google when password is null. */
+    suspend fun reauthenticate(context: Context, password: String?): String? = "Sign in to an account first."
+    fun signOut() {}
+    suspend fun deleteAccount(): String? = null
+    fun currentEmail(): String? = null
+    fun usesGoogle(): Boolean = false
 }
 
 /** Default: checks the form only. The password is never stored. */
