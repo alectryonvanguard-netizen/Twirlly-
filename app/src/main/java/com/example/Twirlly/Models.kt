@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -44,6 +45,9 @@ data class Video(
     val episodeNo: Int = 0,
     val story: Boolean = false
 )
+
+/** Result of typing the kids-mode PIN. */
+class PinResult(val ok: Boolean, val attemptsLeft: Int, val lockedSeconds: Long)
 
 data class Draft(val id: Long, val title: String, val json: String, val savedAt: Long)
 
@@ -88,6 +92,8 @@ data class AppSettings(
     val breakHours: Int = 2,
     val kidsMode: Boolean = false,
     val pinHash: String = "",
+    val pinFails: Int = 0,
+    val pinLockUntil: Long = 0L,
     val bedtimeOn: Boolean = false,
     val bedStart: Int = 22,
     val bedEnd: Int = 6,
@@ -296,7 +302,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _settings.value = AppSettings(
                     notifications = s.optBoolean("notif", true), autoplay = s.optBoolean("auto", true),
                     muted = s.optBoolean("muted", false), theme = s.optInt("theme", 0), accent = s.optInt("accent", 0),
-                    onboarded = s.optBoolean("onb", false), premium = s.optBoolean("prem", false), email = s.optString("email", ""), coins = s.optInt("coins", 0), breakHours = s.optInt("brk", 2), keepWatermark = s.optBoolean("keepwm", false), devMode = s.optBoolean("dev", false), kidsMode = s.optBoolean("kids", false), pinHash = s.optString("pin", ""), bedtimeOn = s.optBoolean("bed", false), bedStart = s.optInt("bedS", 22), bedEnd = s.optInt("bedE", 6), streak = s.optInt("streak", 0), bestStreak = s.optInt("best", 0), lastDay = s.optLong("lday", 0L)
+                    onboarded = s.optBoolean("onb", false), premium = s.optBoolean("prem", false), email = s.optString("email", ""), coins = s.optInt("coins", 0), breakHours = s.optInt("brk", 2), keepWatermark = s.optBoolean("keepwm", false), devMode = s.optBoolean("dev", false), kidsMode = s.optBoolean("kids", false), pinHash = s.optString("pin", ""), pinFails = s.optInt("pf", 0), pinLockUntil = s.optLong("plu", 0L), bedtimeOn = s.optBoolean("bed", false), bedStart = s.optInt("bedS", 22), bedEnd = s.optInt("bedE", 6), streak = s.optInt("streak", 0), bestStreak = s.optInt("best", 0), lastDay = s.optLong("lday", 0L)
                 )
             }
             watchedSecs = o.optLong("watch", 0L)
@@ -334,7 +340,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .put("avatar", p.avatar ?: "").put("banner", p.banner ?: "").put("bv", p.bannerVideo).put("bs", p.bannerStartMs).put("bsc", p.bannerScale.toDouble()).put("box", p.bannerOx.toDouble()).put("boy", p.bannerOy.toDouble()).put("ver", p.verified).put("vreq", p.verifyRequest).put("nca", p.nameChangedAt).put("uca", p.usernameChangedAt).put("private", p.isPrivate))
         val s = _settings.value
         put("settings", JSONObject().put("notif", s.notifications).put("auto", s.autoplay).put("muted", s.muted)
-            .put("theme", s.theme).put("accent", s.accent).put("onb", s.onboarded).put("prem", s.premium).put("email", s.email).put("coins", s.coins).put("brk", s.breakHours).put("keepwm", s.keepWatermark).put("dev", s.devMode).put("kids", s.kidsMode).put("pin", s.pinHash).put("bed", s.bedtimeOn).put("bedS", s.bedStart).put("bedE", s.bedEnd).put("streak", s.streak).put("best", s.bestStreak).put("lday", s.lastDay))
+            .put("theme", s.theme).put("accent", s.accent).put("onb", s.onboarded).put("prem", s.premium).put("email", s.email).put("coins", s.coins).put("brk", s.breakHours).put("keepwm", s.keepWatermark).put("dev", s.devMode).put("kids", s.kidsMode).put("pin", s.pinHash).put("pf", s.pinFails).put("plu", s.pinLockUntil).put("bed", s.bedtimeOn).put("bedS", s.bedStart).put("bedE", s.bedEnd).put("streak", s.streak).put("best", s.bestStreak).put("lday", s.lastDay))
         put("watch", watchedSecs)
         put("drafts", JSONArray().also { a -> _drafts.value.forEach { a.put(JSONObject().put("id", it.id).put("t", it.title).put("j", it.json).put("at", it.savedAt)) } })
         put("playlists", JSONObject().also { po -> _playlists.value.forEach { (k, v) -> po.put(k, JSONArray(v)) } })
@@ -361,6 +367,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             guard++
         }
         writer.execute { try { stateFile.writeText(json) } catch (_: Exception) {} }
+        Cloud.scheduleSync(json)
     }
 
     private fun addEvent(text: String, type: Int = 0, videoId: Long = 0L, sys: Boolean = true) {
@@ -576,11 +583,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (lastEp[seriesId] != ep) { lastEp[seriesId] = ep; persist() }
     }
 
+    // ---- kids mode PIN: salted and slow to guess (PBKDF2), 3 wrong tries lock it for a while, recovery needs the account ----
     private fun sha(pin: String): String =
         java.security.MessageDigest.getInstance("SHA-256").digest(("twirlly:" + pin).toByteArray()).joinToString("") { "%02x".format(it) }
-    fun setKids(pin: String) { _settings.update { it.copy(kidsMode = true, pinHash = sha(pin)) }; persist() }
-    fun checkPin(pin: String): Boolean = sha(pin) == _settings.value.pinHash
-    fun disableKids() { _settings.update { it.copy(kidsMode = false, pinHash = "") }; persist() }
+
+    private fun pbkdf2(pin: String, salt: ByteArray): ByteArray =
+        javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            .generateSecret(javax.crypto.spec.PBEKeySpec(pin.toCharArray(), salt, 120_000, 256)).encoded
+
+    private fun b64(b: ByteArray): String = android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP)
+
+    private fun verifyPin(pin: String, stored: String): Boolean {
+        if (stored.startsWith("p1$")) {
+            val parts = stored.split('$')
+            if (parts.size != 3) return false
+            val salt = android.util.Base64.decode(parts[1], android.util.Base64.NO_WRAP)
+            val expected = android.util.Base64.decode(parts[2], android.util.Base64.NO_WRAP)
+            return java.security.MessageDigest.isEqual(expected, pbkdf2(pin, salt))
+        }
+        // older saved format
+        return java.security.MessageDigest.isEqual(sha(pin).toByteArray(), stored.toByteArray())
+    }
+
+    fun setKids(pin: String) {
+        val salt = ByteArray(16)
+        java.security.SecureRandom().nextBytes(salt)
+        val stored = "p1" + '$' + b64(salt) + '$' + b64(pbkdf2(pin, salt))
+        _settings.update { it.copy(kidsMode = true, pinHash = stored, pinFails = 0, pinLockUntil = 0L) }
+        persist()
+    }
+
+    private fun lockMs(fails: Int): Long = when {
+        fails < 3 -> 0L
+        fails == 3 -> 30_000L
+        fails == 4 -> 120_000L
+        fails == 5 -> 600_000L
+        else -> 1_800_000L
+    }
+
+    fun pinLockedSeconds(): Long {
+        val left = _settings.value.pinLockUntil - System.currentTimeMillis()
+        return if (left > 0) (left + 999) / 1000 else 0L
+    }
+
+    fun checkPin(pin: String): PinResult {
+        val st = _settings.value
+        val locked = pinLockedSeconds()
+        if (locked > 0) return PinResult(false, 0, locked)
+        if (verifyPin(pin, st.pinHash)) {
+            _settings.update { it.copy(pinFails = 0, pinLockUntil = 0L) }
+            persist()
+            return PinResult(true, 3, 0)
+        }
+        val fails = st.pinFails + 1
+        val lock = lockMs(fails)
+        _settings.update { it.copy(pinFails = fails, pinLockUntil = if (lock > 0) System.currentTimeMillis() + lock else 0L) }
+        persist()
+        return PinResult(false, maxOf(0, 3 - fails), lock / 1000)
+    }
+
+    fun disableKids() { _settings.update { it.copy(kidsMode = false, pinHash = "", pinFails = 0, pinLockUntil = 0L) }; persist() }
 
     fun markVerificationRequested(json: String) {
         _profile.update { it.copy(verifyRequest = json) }
@@ -718,5 +780,98 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun signOut() {
         _settings.update { it.copy(email = "", onboarded = false) }
         persist()
+    }
+
+    // ---------------- online account ----------------
+
+    /** After signing in online: bring back your saved data (new phone) or start saving this phone's data. True when data was restored. */
+    suspend fun afterCloudSignIn(email: String): Boolean = withContext(Dispatchers.IO) {
+        val remote = Cloud.pullState()
+        val localTime = if (stateFile.exists()) stateFile.lastModified() else 0L
+        val hasLocal = _settings.value.onboarded
+        if (remote != null && remote.first.isNotBlank() && (!hasLocal || remote.second >= localTime)) {
+            if (importJson(remote.first)) {
+                Cloud.markSynced(remote.first)
+                _settings.update { it.copy(email = email.trim()) }
+                persist()
+                return@withContext _settings.value.onboarded
+            }
+        }
+        Cloud.forget()
+        _settings.update { it.copy(email = email.trim()) }
+        persist()
+        false
+    }
+
+    /** Saves everything online, signs out and clears this phone, so the next person using it sees none of your data. */
+    fun logOut() {
+        viewModelScope.launch(Dispatchers.IO) {
+            Cloud.cancelPending()
+            if (Cloud.online()) Cloud.pushState(buildJson().toString())
+            Auth.provider.signOut()
+            Cloud.forget()
+            wipeLocal()
+        }
+    }
+
+    private fun wipeLocal() {
+        try {
+            stateFile.delete()
+            File(ctx.filesDir, "media").deleteRecursively()
+            File(ctx.filesDir, "demo").deleteRecursively()
+            ctx.cacheDir.deleteRecursively()
+        } catch (_: Exception) {}
+        lastEp.clear(); watchLog.clear(); reports.clear()
+        watchedSecs = 0L
+        _videos.value = emptyList()
+        _following.value = emptySet()
+        _profile.value = Profile()
+        _settings.value = AppSettings()
+        _events.value = emptyList()
+        _drafts.value = emptyList()
+        _playlists.value = emptyMap()
+        _hidden.value = emptySet()
+        _blocked.value = emptySet()
+        _drama.value = null
+        _breakDue.value = false
+        addEvent("Welcome to Twirlly")
+        ensureDemo()
+    }
+
+    /** Like saveProfile, and for online accounts also saves it in Firebase. If the username is taken there, nothing changes. */
+    suspend fun saveProfileCloud(displayName: String, username: String, bio: String, isPrivate: Boolean, onboarding: Boolean = false): String? {
+        val old = _profile.value
+        val err = saveProfile(displayName, username, bio, isPrivate, onboarding)
+        if (err != null) return err
+        if (Cloud.online()) {
+            val now = _profile.value
+            val ce = Cloud.saveProfile(now, now.displayName != old.displayName, now.name != old.name, onboarding)
+            if (ce != null) {
+                _profile.value = old
+                persist()
+                return ce
+            }
+        }
+        return null
+    }
+
+    suspend fun completeOnboardingCloud(displayName: String, username: String): String? {
+        val err = saveProfileCloud(displayName, username, _profile.value.bio, false, onboarding = true)
+        if (err != null) return err
+        _settings.update { it.copy(onboarded = true) }
+        persist()
+        return null
+    }
+
+    /** Deletes everything online (data, username, account) and clears this phone. Call after the owner confirmed it is them. */
+    suspend fun deleteAccountEverywhere(): String? {
+        Cloud.cancelPending()
+        val e = Cloud.deleteAllData()
+        if (e != null) return e
+        val d = Auth.provider.deleteAccount()
+        if (d != null) return d
+        Cloud.forget()
+        withContext(Dispatchers.IO) { wipeLocal() }
+        return null
     }
 }
