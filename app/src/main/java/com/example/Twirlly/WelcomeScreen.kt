@@ -39,11 +39,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val BRAND = Brush.linearGradient(listOf(Color(0xFFFF2D87), Color(0xFFB026FF), Color(0xFF3D5AFE)))
 
-/** First screen: sign-in page, then choose a name and a unique username. */
+@Composable
+private fun GradientButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(16.dp))
+            .background(if (enabled) BRAND else Brush.linearGradient(listOf(Color.White.copy(alpha = 0.2f), Color.White.copy(alpha = 0.2f))))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Text(text, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold) }
+}
+
+/**
+ * First screens: sign in or create an account, confirm the email, then choose a name and a unique username.
+ * Stage 0 = sign in, 1 = confirm email, 2 = name.
+ */
 @Composable
 fun WelcomeScreen(vm: AppViewModel) {
     val view = LocalView.current
@@ -60,7 +74,7 @@ fun WelcomeScreen(vm: AppViewModel) {
     val shift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "shift")
     val pulse by inf.animateFloat(0.94f, 1.06f, infiniteRepeatable(tween(1700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
 
-    var step by remember { mutableIntStateOf(if (settings.email.isNotBlank()) 1 else 0) }
+    var stage by remember { mutableIntStateOf(if (settings.email.isNotBlank()) 2 else 0) }
     var createAccount by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -69,7 +83,15 @@ fun WelcomeScreen(vm: AppViewModel) {
     var display by remember { mutableStateOf(profile.displayName) }
     var user by remember { mutableStateOf(if (profile.name == "creator") "" else profile.name) }
     var error by remember { mutableStateOf<String?>(null) }
+    var info by remember { mutableStateOf<String?>(null) }
     var legal by remember { mutableStateOf<String?>(null) }
+    var resendIn by remember { mutableIntStateOf(0) }
+    LaunchedEffect(resendIn) { if (resendIn > 0) { delay(1000); resendIn-- } }
+
+    suspend fun finishCloud(mail: String) {
+        val restored = vm.afterCloudSignIn(mail)
+        if (!restored) stage = 2
+    }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = Color.White, unfocusedTextColor = Color.White,
@@ -99,101 +121,150 @@ fun WelcomeScreen(vm: AppViewModel) {
             Text("Create. Edit. Share.", color = Color.White.copy(alpha = 0.75f), fontSize = 16.sp)
             Spacer(Modifier.height(28.dp))
 
-            if (step == 0) {
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f)).padding(4.dp)
-                ) {
-                    listOf("Sign in", "Create account").forEachIndexed { i, label ->
-                        val on = createAccount == (i == 1)
-                        Box(
-                            Modifier.weight(1f).clip(RoundedCornerShape(50))
-                                .background(if (on) Color.White.copy(alpha = 0.18f) else Color.Transparent)
-                                .clickable { createAccount = i == 1; error = null }.padding(vertical = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) { Text(label, color = Color.White, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal) }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-                OutlinedTextField(
-                    email, { email = it.trim(); error = null }, Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("Email") }, colors = fieldColors, shape = RoundedCornerShape(16.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    password, { password = it; error = null }, Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("Password") }, colors = fieldColors, shape = RoundedCornerShape(16.dp),
-                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = {
-                        IconButton(onClick = { showPassword = !showPassword }) {
-                            Icon(if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Show password", tint = Color.White.copy(alpha = 0.7f))
+            when (stage) {
+                0 -> {
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f)).padding(4.dp)) {
+                        listOf("Sign in", "Create account").forEachIndexed { i, label ->
+                            val on = createAccount == (i == 1)
+                            Box(
+                                Modifier.weight(1f).clip(RoundedCornerShape(50))
+                                    .background(if (on) Color.White.copy(alpha = 0.18f) else Color.Transparent)
+                                    .clickable { createAccount = i == 1; error = null; info = null }.padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) { Text(label, color = Color.White, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal) }
                         }
                     }
-                )
-                error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp).fillMaxWidth()) }
-                Spacer(Modifier.height(18.dp))
-                Box(
-                    Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(16.dp)).background(BRAND)
-                        .clickable(enabled = !busy) {
+                    Spacer(Modifier.height(16.dp))
+                    OutlinedTextField(
+                        email, { email = it.trim(); error = null; info = null }, Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text("Email") }, colors = fieldColors, shape = RoundedCornerShape(16.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        password, { password = it; error = null; info = null }, Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text(if (createAccount) "Password (8+ letters and numbers)" else "Password") },
+                        colors = fieldColors, shape = RoundedCornerShape(16.dp),
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {
+                                Icon(if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Show password", tint = Color.White.copy(alpha = 0.7f))
+                            }
+                        }
+                    )
+                    if (!createAccount && Auth.provider.isCloud) {
+                        TextButton(onClick = {
                             scope.launch {
-                                busy = true
-                                error = if (createAccount) Auth.provider.signUp(email, password) else Auth.provider.signIn(email, password)
-                                if (error == null) { vm.signIn(email); step = 1 }
+                                val e = Auth.provider.resetPassword(email)
+                                if (e != null) { error = e; info = null } else { error = null; info = "If an account exists for this email, we sent a link to choose a new password." }
+                            }
+                        }, modifier = Modifier.align(Alignment.End)) { Text("Forgot password?", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp) }
+                    }
+                    error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp).fillMaxWidth()) }
+                    info?.let { Text(it, color = Color(0xFF7DDC8B), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp).fillMaxWidth()) }
+                    Spacer(Modifier.height(14.dp))
+                    GradientButton(if (busy) "Please wait..." else if (createAccount) "Create account" else "Sign in", enabled = !busy) {
+                        scope.launch {
+                            busy = true; error = null; info = null
+                            val e = if (createAccount) Auth.provider.signUp(email, password) else Auth.provider.signIn(email, password)
+                            if (e != null) error = e
+                            else if (Auth.provider.isCloud) {
+                                if (createAccount || !Auth.provider.isVerified()) { stage = 1; resendIn = 30 }
+                                else finishCloud(email)
+                            } else { vm.signIn(email); stage = 2 }
+                            busy = false
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        HorizontalDivider(Modifier.weight(1f), color = Color.White.copy(alpha = 0.2f))
+                        Text("  or  ", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                        HorizontalDivider(Modifier.weight(1f), color = Color.White.copy(alpha = 0.2f))
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true; error = null; info = null
+                                val e = Auth.provider.google(ctx)
+                                if (e != null) error = e else finishCloud(Auth.provider.currentEmail() ?: "Google account")
                                 busy = false
                             }
                         },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(if (busy) "Please wait..." else if (createAccount) "Create account" else "Sign in", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    HorizontalDivider(Modifier.weight(1f), color = Color.White.copy(alpha = 0.2f))
-                    Text("  or  ", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
-                    HorizontalDivider(Modifier.weight(1f), color = Color.White.copy(alpha = 0.2f))
-                }
-                Spacer(Modifier.height(16.dp))
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            val e = Auth.provider.google(ctx)
-                            if (e == null) { vm.signIn("Google account"); step = 1 } else error = e
+                        enabled = !busy, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Box(Modifier.size(24.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
+                            Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                ) {
-                    Box(Modifier.size(24.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
-                        Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Continue with Google", fontSize = 15.sp)
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Text("Continue with Google", fontSize = 15.sp)
+                    TextButton(onClick = { stage = 2 }) { Text("Continue as guest", color = Color.White.copy(alpha = 0.8f)) }
+                    Text(
+                        "Guest data stays on this phone only. Passwords are handled by Google Firebase and never stored by Twirlly.",
+                        color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp, textAlign = TextAlign.Center
+                    )
                 }
-                TextButton(onClick = { step = 1 }) { Text("Continue as guest", color = Color.White.copy(alpha = 0.8f)) }
-                Text("Your password is never stored on this phone.", color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp, textAlign = TextAlign.Center)
-            } else {
-                Text("Choose your name", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("You can change these any time in Edit profile.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
-                Spacer(Modifier.height(16.dp))
-                OutlinedTextField(
-                    display, { display = it.take(40) }, Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("Your name") }, colors = fieldColors, shape = RoundedCornerShape(16.dp)
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    user, { user = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '.' }.take(24); error = null },
-                    Modifier.fillMaxWidth(), singleLine = true, label = { Text("Username (unique)") },
-                    prefix = { Text("@", color = Color.White) }, colors = fieldColors, shape = RoundedCornerShape(16.dp)
-                )
-                error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp).fillMaxWidth()) }
-                Spacer(Modifier.height(18.dp))
-                Box(
-                    Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(16.dp)).background(BRAND)
-                        .clickable { error = vm.completeOnboarding(display.ifBlank { user }, user) },
-                    contentAlignment = Alignment.Center
-                ) { Text("Get started", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold) }
-                TextButton(onClick = { step = 0; error = null }) { Text("Back", color = Color.White.copy(alpha = 0.8f)) }
+
+                1 -> {
+                    Text("Check your email", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "We sent a link to " + (Auth.provider.currentEmail() ?: email) + ". Open it, then come back and tap the button.",
+                        color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp, textAlign = TextAlign.Center
+                    )
+                    error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
+                    info?.let { Text(it, color = Color(0xFF7DDC8B), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
+                    Spacer(Modifier.height(18.dp))
+                    GradientButton(if (busy) "Checking..." else "I have verified my email", enabled = !busy) {
+                        scope.launch {
+                            busy = true; error = null; info = null
+                            if (Auth.provider.isVerified()) finishCloud(Auth.provider.currentEmail() ?: email)
+                            else error = "Not confirmed yet. Open the link in your email first. Check the spam folder too."
+                            busy = false
+                        }
+                    }
+                    TextButton(
+                        enabled = resendIn == 0,
+                        onClick = {
+                            scope.launch {
+                                val e = Auth.provider.sendVerification()
+                                if (e != null) error = e else { error = null; info = "We sent the email again."; resendIn = 30 }
+                            }
+                        }
+                    ) { Text(if (resendIn > 0) "Send the email again ($resendIn)" else "Send the email again", color = Color.White.copy(alpha = 0.85f)) }
+                    TextButton(onClick = { Auth.provider.signOut(); stage = 0; error = null; info = null }) {
+                        Text("Use a different email", color = Color.White.copy(alpha = 0.7f))
+                    }
+                }
+
+                else -> {
+                    Text("Choose your name", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("You can change these once every 7 days.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+                    Spacer(Modifier.height(16.dp))
+                    OutlinedTextField(
+                        display, { display = it.take(40) }, Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text("Your name") }, colors = fieldColors, shape = RoundedCornerShape(16.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        user, { user = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '.' }.take(24); error = null },
+                        Modifier.fillMaxWidth(), singleLine = true, label = { Text("Username (unique)") },
+                        prefix = { Text("@", color = Color.White) }, colors = fieldColors, shape = RoundedCornerShape(16.dp)
+                    )
+                    error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp).fillMaxWidth()) }
+                    Spacer(Modifier.height(18.dp))
+                    GradientButton(if (busy) "Please wait..." else "Get started", enabled = !busy) {
+                        scope.launch {
+                            busy = true
+                            error = vm.completeOnboardingCloud(display.ifBlank { user }, user)
+                            busy = false
+                        }
+                    }
+                    TextButton(onClick = { Auth.provider.signOut(); stage = 0; error = null }) { Text("Back", color = Color.White.copy(alpha = 0.8f)) }
+                }
             }
 
             Spacer(Modifier.height(12.dp))
