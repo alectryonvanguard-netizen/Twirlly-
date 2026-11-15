@@ -20,6 +20,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
 
@@ -74,40 +76,125 @@ fun ScreenTimeDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     )
 }
 
-/** Asks for the 4-digit PIN. onSubmit returns true when the PIN was right. */
+/** Asks the account owner to prove it is them (password, or Google). Used to reset the PIN and to delete the account. */
 @Composable
-fun PinDialog(title: String, onDismiss: () -> Unit, onSubmit: (String) -> Boolean) {
+fun ConfirmIdentityDialog(title: String, actionText: String, onBack: () -> Unit, onVerified: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val provider = Auth.provider
+    val signedIn = provider.isCloud && provider.currentEmail() != null
+    val google = provider.usesGoogle()
+    var pw by remember { mutableStateOf("") }
+    var err by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onBack() },
+        title = { Text(title) },
+        text = {
+            Column {
+                when {
+                    !signedIn -> Text("This phone is not signed in to an account, so this cannot be confirmed here. Sign in with your account first.")
+                    google -> Text("Confirm that it is you by choosing your Google account again.")
+                    else -> {
+                        Text("Enter your account password to confirm it is you.")
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            pw, { pw = it; err = null }, singleLine = true, label = { Text("Password") },
+                            visualTransformation = PasswordVisualTransformation()
+                        )
+                    }
+                }
+                err?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
+            }
+        },
+        confirmButton = {
+            if (signedIn) {
+                TextButton(
+                    enabled = !busy && (google || pw.isNotEmpty()),
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            err = provider.reauthenticate(ctx, if (google) null else pw)
+                            busy = false
+                            if (err == null) onVerified()
+                        }
+                    }
+                ) { Text(if (busy) "Please wait..." else actionText) }
+            }
+        },
+        dismissButton = { TextButton(onClick = onBack, enabled = !busy) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Asks for the 4-digit PIN. Three wrong tries lock it for a while (longer each time).
+ * "Forgot PIN?" lets the account owner set a new one after confirming it is them.
+ */
+@Composable
+fun PinDialog(title: String, vm: AppViewModel, onDismiss: () -> Unit, onUnlocked: () -> Unit) {
+    val settings by vm.settings.collectAsState()
     var pin by remember { mutableStateOf("") }
-    var wrong by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    var recover by remember { mutableStateOf(false) }
+    var setNew by remember { mutableStateOf(false) }
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
+    val locked = remember(tick, settings.pinLockUntil) { vm.pinLockedSeconds() }
+
+    if (setNew) {
+        SetPinDialog(onDismiss = { setNew = false }) { p -> vm.setKids(p); setNew = false; onUnlocked() }
+        return
+    }
+    if (recover) {
+        ConfirmIdentityDialog("Reset the PIN", "Confirm", onBack = { recover = false }, onVerified = { recover = false; setNew = true })
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column {
+                Text("Type the 4-digit PIN to continue.")
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
-                    pin, { pin = it.filter { c -> c.isDigit() }.take(4); wrong = false }, singleLine = true,
+                    pin, { pin = it.filter { c -> c.isDigit() }.take(4); msg = null }, singleLine = true, enabled = locked == 0L,
                     label = { Text("PIN") }, visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                 )
-                if (wrong) Text("Wrong PIN. Try again.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                if (locked > 0L) Text("Too many wrong tries. Try again in $locked seconds.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                else msg?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                TextButton(onClick = { recover = true }) { Text("Forgot PIN?") }
             }
         },
-        confirmButton = { TextButton(onClick = { if (!onSubmit(pin)) { wrong = true; pin = "" } }) { Text("OK") } },
+        confirmButton = {
+            TextButton(
+                enabled = locked == 0L && pin.length == 4,
+                onClick = {
+                    val r = vm.checkPin(pin)
+                    if (r.ok) onUnlocked()
+                    else {
+                        pin = ""
+                        msg = if (r.lockedSeconds > 0) "Wrong PIN. Locked for ${r.lockedSeconds} seconds." else "Wrong PIN. ${r.attemptsLeft} tries left before it locks."
+                    }
+                }
+            ) { Text("OK") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
-fun SetPinDialog(onDismiss: () -> Unit, onSet: (String) -> Unit) {
+fun SetPinDialog(onDismiss: () -> Unit, warning: String? = null, onSet: (String) -> Unit) {
     var a by remember { mutableStateOf("") }
     var b by remember { mutableStateOf("") }
     var err by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Turn on kids mode") },
+        title = { Text("Set a PIN for kids mode") },
         text = {
             Column {
                 Text("Create, LIVE, settings and profile editing will need this PIN.", fontSize = 13.sp, color = Color.Gray)
+                warning?.let { Text(it, fontSize = 12.sp, color = Color(0xFFFFB300), modifier = Modifier.padding(top = 6.dp)) }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     a, { a = it.filter { c -> c.isDigit() }.take(4); err = null }, singleLine = true, label = { Text("New 4-digit PIN") },
@@ -126,7 +213,7 @@ fun SetPinDialog(onDismiss: () -> Unit, onSet: (String) -> Unit) {
                 if (a.length != 4) err = "The PIN needs 4 digits."
                 else if (a != b) err = "The two PINs are different."
                 else onSet(a)
-            }) { Text("Turn on") }
+            }) { Text("Save PIN") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
