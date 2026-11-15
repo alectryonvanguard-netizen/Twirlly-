@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "417317261167",
+    "project_id": "twirlly-75313",
+    "storage_bucket": "twirlly-75313.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:417317261167:android:5fd3f19df68d8928de629a",
+        "android_client_info": {
+          "package_name": "com.example.twirlly"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "417317261167-s849equb9t0gag7p35htufa7kpecb83r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD5pqoX63d1QrEEr39ZdoOe1-Kc4LlHrHM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "417317261167-s849equb9t0gag7p35htufa7kpecb83r.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
