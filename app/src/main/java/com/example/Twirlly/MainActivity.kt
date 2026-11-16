@@ -125,8 +125,10 @@ class MainActivity : ComponentActivity() {
 fun TwirllyApp(vm: AppViewModel) {
     val ctx = LocalContext.current
     val videos by vm.videos.collectAsState()
+    val remoteAll by vm.remote.collectAsState()
     val settings by vm.settings.collectAsState()
     val drama by vm.drama.collectAsState()
+    LaunchedEffect(settings.email, settings.onboarded) { if (settings.onboarded && Cloud.online()) { vm.refreshRemote(); vm.publishPending() } }
     val breakDue by vm.breakDue.collectAsState()
     val breakKind by vm.breakKind.collectAsState()
     var pinAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -198,7 +200,7 @@ fun TwirllyApp(vm: AppViewModel) {
                 is Overlay.SettingsPage -> SettingsScreen(vm, onBack = { overlay = null }, onEditProfile = { overlay = Overlay.EditPage }, onLivePreview = { overlay = Overlay.Live(true) })
                 is Overlay.EditPage -> EditProfileScreen(vm) { overlay = null }
                 is Overlay.Viewer -> {
-                    val list = o.ids.mapNotNull { id -> videos.firstOrNull { it.id == id } }
+                    val list = o.ids.mapNotNull { id -> (videos + remoteAll).firstOrNull { it.id == id } }
                     FeedPager(vm, list, o.start, { overlay = o.back }, null, openUser)
                 }
                 is Overlay.Editor -> EditorScreen(vm, o.uris, o.draft, onClose = { overlay = null }) {
