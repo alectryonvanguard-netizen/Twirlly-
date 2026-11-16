@@ -18,7 +18,8 @@ import java.util.concurrent.Executors
 
 data class Comment(
     val user: String, val text: String, val id: Long = 0L, val time: Long = 0L,
-    val likes: Int = 0, val liked: Boolean = false
+    val likes: Int = 0, val liked: Boolean = false,
+    val media: String? = null, val gif: Boolean = false
 )
 
 fun wordCount(s: String): Int = s.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
@@ -128,7 +129,7 @@ private fun Video.toJson(): JSONObject = JSONObject().apply {
     put("liked", liked); put("saved", saved); put("shares", shares); put("t", createdAt)
     put("comments", JSONArray().also { arr ->
         comments.forEach {
-            arr.put(JSONObject().put("u", it.user).put("x", it.text).put("i", it.id).put("t", it.time).put("l", it.likes).put("k", it.liked))
+            arr.put(JSONObject().put("u", it.user).put("x", it.text).put("i", it.id).put("t", it.time).put("l", it.likes).put("k", it.liked).put("m", it.media ?: "").put("g", it.gif))
         }
     })
     put("images", JSONArray(images)); put("audio", audio ?: ""); put("project", project ?: "")
@@ -144,7 +145,7 @@ private fun JSONObject.toVideo(): Video {
         liked = optBoolean("liked"), saved = optBoolean("saved"), shares = optInt("shares"),
         comments = (0 until cs.length()).map {
             val o = cs.getJSONObject(it)
-            Comment(o.getString("u"), o.getString("x"), o.optLong("i"), o.optLong("t"), o.optInt("l"), o.optBoolean("k"))
+            Comment(o.getString("u"), o.getString("x"), o.optLong("i"), o.optLong("t"), o.optInt("l"), o.optBoolean("k"), media = o.optString("m", "").takeIf { it.isNotBlank() }, gif = o.optBoolean("g"))
         },
         createdAt = optLong("t"),
         images = (0 until imgs.length()).map { imgs.getString(it) },
@@ -436,12 +437,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         addEvent("You shared @${v.user}'s post", 4, id)
     }
 
-    fun addComment(id: Long, text: String) {
+    fun addComment(id: Long, text: String, media: String? = null, gif: Boolean = false) {
         adopt(id)
-        findVideo(id)?.cloudId?.let { cid -> if (text.isNotBlank() && wordCount(text) <= 500) viewModelScope.launch(Dispatchers.IO) { CloudShare.addComment(cid, text.trim(), _profile.value.name); loadComments(id) } }
-        if (text.isBlank() || wordCount(text) > 500) return
+        if ((text.isBlank() && media == null) || wordCount(text) > 500) return
+        findVideo(id)?.cloudId?.let { cid -> viewModelScope.launch(Dispatchers.IO) { CloudShare.addComment(cid, text.trim(), _profile.value.name, media, gif); loadComments(id) } }
         val me = _profile.value.name
-        val c = Comment(me, text.trim(), System.nanoTime(), System.currentTimeMillis())
+        val c = Comment(me, text.trim(), System.nanoTime(), System.currentTimeMillis(), media = media, gif = gif)
         val owner = _videos.value.firstOrNull { it.id == id }?.user ?: ""
         mutate(id) { it.copy(comments = it.comments + c) }
         addEvent("You commented on @$owner's post: " + c.text.take(60), 2, id)
@@ -772,6 +773,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             commentDocs[id] = list.associate { it.second.id to it.first }
             patchVideo(id) { it.copy(comments = list.map { p -> p.second }) }
         }
+    }
+
+    /** Opens a post from a shared link. Returns the id to show, or null. */
+    suspend fun openLinkedPost(cloudId: String): Long? = withContext(Dispatchers.IO) {
+        val existing = _videos.value.firstOrNull { it.cloudId == cloudId }
+        if (existing != null) return@withContext existing.id
+        val p = CloudShare.loadPost(cloudId) ?: return@withContext null
+        if (_remote.value.none { it.cloudId == cloudId }) _remote.update { listOf(p) + it }
+        p.id
     }
 
     fun loadUserProfile(username: String) {
