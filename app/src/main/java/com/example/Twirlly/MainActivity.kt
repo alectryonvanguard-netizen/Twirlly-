@@ -57,8 +57,17 @@ sealed interface Overlay {
 }
 
 class MainActivity : ComponentActivity() {
+    private val linkState = mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        linkState.value = intent.dataString
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        linkState.value = intent?.dataString
         enableEdgeToEdge()
         hideNavigationBar()
         val crashFile = File(filesDir, "crash.txt")
@@ -93,7 +102,7 @@ class MainActivity : ComponentActivity() {
                         Button(onClick = { crashFile.delete(); report = null }) { Text("Clear and retry") }
                     }
                 } else {
-                    if (!settings.onboarded) WelcomeScreen(vm) else TwirllyApp(vm)
+                    if (!settings.onboarded) WelcomeScreen(vm) else TwirllyApp(vm, linkState.value) { linkState.value = null }
                 }
             }
         }
@@ -122,7 +131,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun TwirllyApp(vm: AppViewModel) {
+fun TwirllyApp(vm: AppViewModel, link: String? = null, onLink: () -> Unit = {}) {
     val ctx = LocalContext.current
     val videos by vm.videos.collectAsState()
     val remoteAll by vm.remote.collectAsState()
@@ -145,6 +154,20 @@ fun TwirllyApp(vm: AppViewModel) {
         ) permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    LaunchedEffect(link, settings.onboarded) {
+        val l = link
+        if (l != null && settings.onboarded) {
+            val uri = android.net.Uri.parse(l)
+            val segs = (if (uri.scheme == "twirlly") listOfNotNull(uri.host) else emptyList()) + uri.pathSegments
+            if (segs.size >= 2 && segs[0] == "v") {
+                val id = vm.openLinkedPost(segs[1])
+                if (id != null) overlay = Overlay.Viewer(listOf(id), 0)
+            } else if (segs.size >= 2 && segs[0] == "u") {
+                overlay = Overlay.User(segs[1])
+            }
+            onLink()
+        }
+    }
     BackHandler(enabled = overlay != null || drama != null) {
         if (drama != null) vm.closeDrama()
         else {
