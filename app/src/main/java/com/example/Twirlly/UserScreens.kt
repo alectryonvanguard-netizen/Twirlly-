@@ -1,6 +1,8 @@
 package com.example.twirlly
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -23,7 +25,12 @@ import androidx.compose.ui.unit.sp
 /** Profile page of another creator in the app. */
 @Composable
 fun UserProfileScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onOpen: (List<Long>, Int) -> Unit) {
-    val videos by vm.videos.collectAsState()
+    val local by vm.videos.collectAsState()
+    val remote by vm.remote.collectAsState()
+    val videos = remote + local
+    val peopleMap by vm.people.collectAsState()
+    val info = peopleMap[name]
+    LaunchedEffect(name) { vm.loadUserProfile(name) }
     val following by vm.following.collectAsState()
     val theirs = videos.filter { it.user == name && !it.local }
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -40,9 +47,10 @@ fun UserProfileScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onOpen
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.fillMaxWidth()) {
                     Box(Modifier.fillMaxWidth().height(150.dp + statusTop).background(Brush.verticalGradient(listOf(c1, c2)))) {
+                        info?.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
                         BannerFade(Modifier.align(Alignment.BottomCenter))
                         Avatar(
-                            null, name, 84.dp,
+                            info?.avatarUrl, name, 84.dp,
                             Modifier.align(Alignment.BottomStart).offset(x = 16.dp, y = 42.dp)
                                 .border(3.dp, MaterialTheme.colorScheme.background, CircleShape)
                         )
@@ -55,12 +63,16 @@ fun UserProfileScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onOpen
                         else Button(onClick = { vm.toggleFollow(name) }) { Text("Follow") }
                     }
                     Column(Modifier.padding(horizontal = 16.dp)) {
-                        Text(DemoContent.displayOf(name), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                        Text(info?.displayName?.ifBlank { name } ?: DemoContent.displayOf(name), fontWeight = FontWeight.Bold, fontSize = 22.sp)
                         Text("@$name", color = Color.Gray, fontSize = 14.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text(DemoContent.bioOf(name), fontSize = 14.sp)
+                        Text(info?.bio ?: DemoContent.bioOf(name), fontSize = 14.sp)
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                            if (info != null) Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(fmt(info.followers), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text("Followers", color = Color.Gray, fontSize = 12.sp)
+                            }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(theirs.size.toString(), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                                 Text("Posts", color = Color.Gray, fontSize = 12.sp)
