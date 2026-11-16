@@ -65,7 +65,10 @@ fun fmt(n: Int) = when {
 
 @Composable
 fun FeedScreen(vm: AppViewModel, onOpenProfile: () -> Unit, onUser: (Video) -> Unit, paused: Boolean = false) {
-    val all by vm.videos.collectAsState()
+    val allLocal by vm.videos.collectAsState()
+    val remoteList by vm.remote.collectAsState()
+    val all = remoteList.filter { r -> allLocal.none { it.cloudId != null && it.cloudId == r.cloudId } } + allLocal
+    LaunchedEffect(Unit) { while (true) { vm.refreshRemote(); delay(45_000) } }
     val following by vm.following.collectAsState()
     var forYou by remember { mutableStateOf(true) }
     val hiddenIds by vm.hidden.collectAsState()
@@ -217,6 +220,7 @@ fun VideoPage(v: Video, active: Boolean, vm: AppViewModel, onUser: (Video) -> Un
     var showShare by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     val vids by vm.videos.collectAsState()
+    val people by vm.people.collectAsState()
     val dramaOpen by vm.drama.collectAsState()
     val breakOn by vm.breakDue.collectAsState()
     val landscapeOn by vm.landscape.collectAsState()
@@ -314,7 +318,7 @@ fun VideoPage(v: Video, active: Boolean, vm: AppViewModel, onUser: (Video) -> Un
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Box(contentAlignment = Alignment.BottomCenter) {
-                Avatar(if (v.local) profile.avatar else null, v.user, 48.dp, Modifier.clickable { onUser(v) })
+                Avatar(if (v.local) profile.avatar else people[v.user]?.avatarUrl, v.user, 48.dp, Modifier.clickable { onUser(v) })
                 if (!v.local && v.user !in following) Box(
                     Modifier.offset(y = 9.dp).size(20.dp).clip(CircleShape)
                         .background(Color(0xFFFF2D87)).clickable { vm.toggleFollow(v.user) },
@@ -353,6 +357,7 @@ fun Action(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
 
 @Composable
 fun CommentsSheet(v: Video, vm: AppViewModel) {
+    LaunchedEffect(v.id) { vm.loadComments(v.id) }
     val profile by vm.profile.collectAsState()
     var text by remember { mutableStateOf("") }
     val words = wordCount(text)
@@ -370,7 +375,7 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
             itemsIndexed(v.comments) { i, c ->
                 var expanded by remember { mutableStateOf(false) }
                 Row(Modifier.padding(vertical = 8.dp)) {
-                    Avatar(if (c.user == profile.name) profile.avatar else null, c.user, 34.dp)
+                    Avatar(if (c.user == profile.name) profile.avatar else vm.people.value[c.user]?.avatarUrl, c.user, 34.dp)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
