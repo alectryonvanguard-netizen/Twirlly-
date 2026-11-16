@@ -120,7 +120,7 @@ fun ShareSheet(v: Video, vm: AppViewModel, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val settings by vm.settings.collectAsState()
     val playlists by vm.playlists.collectAsState()
-    val link = SHARE_BASE + v.id
+    val link = SHARE_BASE + (v.cloudId ?: v.id.toString())
     val text = "Watch @" + v.user + " on Twirlly: " + v.caption + "\n" + link
     var landscape by remember { mutableStateOf(false) }
     var reportOpen by remember { mutableStateOf(false) }
