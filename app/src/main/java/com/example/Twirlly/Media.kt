@@ -130,7 +130,7 @@ data class PhotoEdit(
     val filter: Int = 0
 )
 
-val FILTER_NAMES = listOf("Normal", "B&W", "Warm", "Cool", "Vivid", "Fade", "Sepia", "Noir", "Vintage", "Rose", "Cyber", "Sunset", "Mint", "Drama", "Retro", "Sky", "Peach", "Mono blue")
+val FILTER_NAMES = listOf("Normal", "B&W", "Warm", "Cool", "Vivid", "Fade", "Sepia", "Noir", "Vintage", "Rose", "Cyber", "Sunset", "Mint", "Drama", "Retro", "Sky", "Peach", "Mono blue", "Golden hour", "Moonlight", "Neon pink", "Forest", "Ocean", "Candy", "Matrix", "Film", "Cool fade", "Warm fade")
 
 fun filterArray(i: Int): FloatArray? = when (i) {
     1 -> floatArrayOf(0.33f, 0.59f, 0.11f, 0f, 0f, 0.33f, 0.59f, 0.11f, 0f, 0f, 0.33f, 0.59f, 0.11f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
@@ -150,6 +150,16 @@ fun filterArray(i: Int): FloatArray? = when (i) {
     15 -> floatArrayOf(0.8f, 0f, 0f, 0f, 0f, 0f, 0.95f, 0f, 0f, 5f, 0f, 0f, 1.25f, 0f, 15f, 0f, 0f, 0f, 1f, 0f)
     16 -> floatArrayOf(1.1f, 0.1f, 0.05f, 0f, 15f, 0.05f, 0.95f, 0.05f, 0f, 5f, 0f, 0.05f, 0.9f, 0f, 5f, 0f, 0f, 0f, 1f, 0f)
     17 -> floatArrayOf(0.2f, 0.4f, 0.1f, 0f, 0f, 0.25f, 0.5f, 0.1f, 0f, 0f, 0.45f, 0.7f, 0.3f, 0f, 10f, 0f, 0f, 0f, 1f, 0f)
+    18 -> floatArrayOf(1.15f, 0.1f, 0f, 0f, 12f, 0.05f, 1f, 0f, 0f, 6f, 0f, 0f, 0.75f, 0f, -8f, 0f, 0f, 0f, 1f, 0f)
+    19 -> floatArrayOf(0.8f, 0f, 0.1f, 0f, 0f, 0f, 0.9f, 0.1f, 0f, 5f, 0.1f, 0.1f, 1.2f, 0f, 18f, 0f, 0f, 0f, 1f, 0f)
+    20 -> floatArrayOf(1.2f, 0f, 0.4f, 0f, 10f, 0f, 0.7f, 0.2f, 0f, 0f, 0.3f, 0f, 1.3f, 0f, 15f, 0f, 0f, 0f, 1f, 0f)
+    21 -> floatArrayOf(0.8f, 0.2f, 0f, 0f, 0f, 0f, 1.15f, 0f, 0f, 6f, 0f, 0.1f, 0.8f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
+    22 -> floatArrayOf(0.7f, 0f, 0.1f, 0f, 0f, 0f, 1f, 0.2f, 0f, 5f, 0.1f, 0.2f, 1.3f, 0f, 10f, 0f, 0f, 0f, 1f, 0f)
+    23 -> floatArrayOf(1.2f, 0.1f, 0.1f, 0f, 12f, 0.1f, 1f, 0.2f, 0f, 10f, 0.2f, 0.1f, 1.2f, 0f, 12f, 0f, 0f, 0f, 1f, 0f)
+    24 -> floatArrayOf(0.2f, 0.4f, 0.1f, 0f, 0f, 0.3f, 0.9f, 0.2f, 0f, 10f, 0.1f, 0.3f, 0.2f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
+    25 -> floatArrayOf(1f, 0.1f, 0f, 0f, 8f, 0f, 0.95f, 0.05f, 0f, 4f, 0f, 0.1f, 0.85f, 0f, 10f, 0f, 0f, 0f, 1f, 0f)
+    26 -> floatArrayOf(0.9f, 0f, 0.1f, 0f, 15f, 0f, 0.95f, 0.1f, 0f, 15f, 0.1f, 0.1f, 1.1f, 0f, 20f, 0f, 0f, 0f, 1f, 0f)
+    27 -> floatArrayOf(1f, 0.1f, 0f, 0f, 25f, 0f, 0.9f, 0.05f, 0f, 18f, 0f, 0f, 0.75f, 0f, 14f, 0f, 0f, 0f, 1f, 0f)
     else -> null
 }
 
