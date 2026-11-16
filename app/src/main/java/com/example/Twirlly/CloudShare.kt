@@ -186,12 +186,14 @@ object CloudShare {
         } catch (_: Exception) {}
     }
 
-    suspend fun addComment(cloudId: String, text: String, username: String) {
+    suspend fun addComment(cloudId: String, text: String, username: String, media: String? = null, gif: Boolean = false) {
         val uid = Cloud.uid() ?: return
         try {
             val post = db().collection("posts").document(cloudId)
             val b = db().batch()
-            b.set(post.collection("comments").document(), mapOf("uid" to uid, "username" to username, "text" to text.take(3000), "createdAt" to FieldValue.serverTimestamp()))
+            val cm = hashMapOf<String, Any>("uid" to uid, "username" to username, "text" to text.take(3000), "createdAt" to FieldValue.serverTimestamp())
+            if (media != null && media.startsWith("https://")) { cm["media"] = media; cm["mediaKind"] = if (gif) "gif" else "photo" }
+            b.set(post.collection("comments").document(), cm)
             b.update(post, "commentsCount", FieldValue.increment(1L))
             b.commit().await()
         } catch (_: Exception) {}
@@ -199,9 +201,27 @@ object CloudShare {
 
     suspend fun loadComments(cloudId: String): List<Pair<String, Comment>> = try {
         db().collection("posts").document(cloudId).collection("comments").orderBy("createdAt").limit(200).get().await().documents.map { d ->
-            Pair(d.id, Comment(d.getString("username") ?: "user", d.getString("text") ?: "", d.id.hashCode().toLong(), d.getTimestamp("createdAt")?.toDate()?.time ?: 0L))
+            Pair(d.id, Comment(d.getString("username") ?: "user", d.getString("text") ?: "", d.id.hashCode().toLong(), d.getTimestamp("createdAt")?.toDate()?.time ?: 0L, media = d.getString("media"), gif = d.getString("mediaKind") == "gif"))
         }
     } catch (e: Exception) { emptyList() }
+
+    suspend fun loadPost(cloudId: String): Video? = try {
+        val d = db().collection("posts").document(cloudId).get().await()
+        if (d.exists()) toVideo(d) else null
+    } catch (e: Exception) { null }
+
+    /** A photo for a comment: shrunk to 1080 pixels and uploaded. Returns its web address. */
+    suspend fun uploadCommentImage(ctx: Context, uri: android.net.Uri): String? {
+        val uid = Cloud.uid() ?: return null
+        return try {
+            val bmp = ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = 2 }) } ?: return null
+            val scale = 1080f / maxOf(bmp.width, bmp.height)
+            val out = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
+            val bytes = ByteArrayOutputStream()
+            out.compress(Bitmap.CompressFormat.JPEG, 82, bytes)
+            uploadBytes(bytes.toByteArray(), "users/$uid/media/c_" + System.currentTimeMillis() + ".jpg", "image/jpeg")
+        } catch (e: Exception) { null }
+    }
 
     suspend fun deleteComment(cloudId: String, commentDocId: String) {
         try {
