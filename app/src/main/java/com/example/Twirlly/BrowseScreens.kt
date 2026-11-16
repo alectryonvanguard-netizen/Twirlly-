@@ -86,6 +86,8 @@ fun DiscoverScreen(vm: AppViewModel, onUser: (String) -> Unit = {}, onOpen: (Lis
     val hiddenIds by vm.hidden.collectAsState()
     val blockedUsers by vm.blocked.collectAsState()
     var q by remember { mutableStateOf("") }
+    val found by vm.found.collectAsState()
+    LaunchedEffect(q) { vm.searchPeople(q) }
     val tags = remember(videos) {
         Regex("#\\w+").findAll(videos.joinToString(" ") { it.caption })
             .map { it.value.lowercase() }.groupingBy { it }.eachCount()
@@ -105,6 +107,20 @@ fun DiscoverScreen(vm: AppViewModel, onUser: (String) -> Unit = {}, onOpen: (Lis
             items(tags) { t -> AssistChip(onClick = { q = t }, label = { Text(t) }) }
         }
         Spacer(Modifier.height(8.dp))
+        if (found.isNotEmpty()) {
+            Text("People", fontWeight = FontWeight.Bold)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(found) { p ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Avatar(p.avatarUrl, p.username, 56.dp, Modifier.clickable { onUser(p.username) })
+                        Text(p.displayName.ifBlank { p.username }, fontSize = 11.sp, maxLines = 1)
+                        TextButton(onClick = { vm.toggleFollow(p.username) }) {
+                            Text(if (p.username in following) "Following" else "Follow", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
         Text("Creators", fontWeight = FontWeight.Bold)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(creators) { c ->
