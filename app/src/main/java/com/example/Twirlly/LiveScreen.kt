@@ -128,7 +128,7 @@ private fun micLevel(enabled: Boolean): Float {
 }
 
 @Composable
-private fun CameraPreview(front: Boolean, torch: Boolean, zoom: Float, onCamera: (Camera?) -> Unit, modifier: Modifier) {
+private fun CameraPreview(front: Boolean, torch: Boolean, zoom: Float, onCamera: (Camera?) -> Unit, modifier: Modifier, matrix: FloatArray? = null) {
     val ctx = LocalContext.current
     val owner = ctx as? LifecycleOwner
     var camera by remember { mutableStateOf<Camera?>(null) }
@@ -157,7 +157,18 @@ private fun CameraPreview(front: Boolean, torch: Boolean, zoom: Float, onCamera:
     }
     LaunchedEffect(camera, torch) { try { camera?.cameraControl?.enableTorch(torch) } catch (_: Exception) {} }
     LaunchedEffect(camera, zoom) { try { camera?.cameraControl?.setLinearZoom(zoom) } catch (_: Exception) {} }
-    AndroidView(factory = { previewView }, modifier = modifier)
+    AndroidView(
+        factory = { previewView },
+        update = { v ->
+            if (matrix == null) v.setLayerType(android.view.View.LAYER_TYPE_NONE, null)
+            else {
+                val p = android.graphics.Paint()
+                p.colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix(matrix))
+                v.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, p)
+            }
+        },
+        modifier = modifier
+    )
 }
 
 
@@ -174,7 +185,8 @@ private val EFFECT_ICONS = listOf(
 private val EFFECT_TABS = listOf(
     "Looks" to listOf(0, 1, 2, 3, 4, 5, 6, 7),
     "Fun" to listOf(8, 9, 10, 11, 12, 13),
-    "Anime" to listOf(14, 15, 16, 17, 18, 19)
+    "Anime" to listOf(14, 15, 16, 17, 18, 19),
+    "Filters" to emptyList()
 )
 private fun effectLocked(i: Int) = i >= 4 && i < 14 || i >= 16
 private val TOPICS = listOf("Chat", "Music", "Gaming", "Anime", "Learning", "Fashion", "Comedy")
@@ -495,6 +507,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
     var torch by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(0f) }
     var effect by remember { mutableIntStateOf(0) }
+    var filter by remember { mutableIntStateOf(0) }
     var beauty by remember { mutableFloatStateOf(0.3f) }
     var exposure by remember { mutableFloatStateOf(0f) }
     var grid by remember { mutableStateOf(false) }
@@ -555,7 +568,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
             }
         } else {
             Box(Modifier.fillMaxSize().graphicsLayer { scaleX = if (effect == 6) -1f else 1f }) {
-                CameraPreview(front, torch, zoom, { }, Modifier.fillMaxSize())
+                CameraPreview(front, torch, zoom, { }, Modifier.fillMaxSize(), filterArray(filter))
             }
             EffectLayer(effect, beauty, exposure)
             if (grid) Canvas(Modifier.fillMaxSize()) {
@@ -728,7 +741,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                             }
                         }
                         Spacer(Modifier.height(12.dp))
-                        LazyVerticalGrid(GridCells.Fixed(4), Modifier.height(230.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (effectTab == 3) FilterGrid(filter, settings.premium, { filter = it }, { premiumAsk = true }) else LazyVerticalGrid(GridCells.Fixed(4), Modifier.height(230.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             gridItems(EFFECT_TABS[effectTab].second) { i ->
                                 val locked = effectLocked(i) && !settings.premium
                                 Column(
@@ -854,4 +867,31 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
         }
     }
     if (premiumAsk) PremiumDialog(vm) { premiumAsk = false }
+}
+
+
+private fun swatch(i: Int): Color {
+    val a = filterArray(i) ?: return Color(0xFFC8A082)
+    fun c(x: Float) = x.coerceIn(0f, 255f) / 255f
+    val r = 200f
+    val g = 160f
+    val b = 130f
+    return Color(c(a[0] * r + a[1] * g + a[2] * b + a[4]), c(a[5] * r + a[6] * g + a[7] * b + a[9]), c(a[10] * r + a[11] * g + a[12] * b + a[14]))
+}
+
+/** Colour looks for the live camera. The first six are free. */
+@Composable
+private fun FilterGrid(sel: Int, premium: Boolean, onPick: (Int) -> Unit, onLocked: () -> Unit) {
+    LazyVerticalGrid(GridCells.Fixed(4), Modifier.height(230.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        gridItems(FILTER_NAMES.indices.toList()) { i ->
+            val locked = i >= 6 && !premium
+            Column(Modifier.clickable { if (locked) onLocked() else onPick(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier.size(60.dp).clip(CircleShape).background(swatch(i))
+                        .then(if (sel == i) Modifier.border(2.dp, Color(0xFFFF2D87), CircleShape) else Modifier)
+                )
+                Text(if (locked) FILTER_NAMES[i] + " ★" else FILTER_NAMES[i], color = Color.White, fontSize = 11.sp, maxLines = 1)
+            }
+        }
+    }
 }
