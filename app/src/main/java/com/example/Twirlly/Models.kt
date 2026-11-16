@@ -1,4 +1,3 @@
-
 package com.example.twirlly
 
 import android.app.Application
@@ -52,6 +51,12 @@ data class Video(
 /** Result of typing the kids-mode PIN. */
 class PinResult(val ok: Boolean, val attemptsLeft: Int, val lockedSeconds: Long)
 
+/** Someone's public profile from the cloud. */
+class PersonInfo(
+    val uid: String, val username: String, val displayName: String, val bio: String,
+    val avatarUrl: String?, val bannerUrl: String?, val verified: Boolean, val followers: Int, val following: Int
+)
+
 data class Draft(val id: Long, val title: String, val json: String, val savedAt: Long)
 
 /** How a new post is added: as a single post, as a new drama, or as the next episode of one of your dramas. */
@@ -73,6 +78,8 @@ data class Profile(
     val avatar: String? = null,
     val banner: String? = null,
     val bannerVideo: Boolean = false,
+    val avatarUrl: String? = null,
+    val bannerUrl: String? = null,
     val bannerStartMs: Long = 0L,
     val bannerScale: Float = 1f,
     val bannerOx: Float = 0f,
@@ -125,8 +132,7 @@ private fun Video.toJson(): JSONObject = JSONObject().apply {
         }
     })
     put("images", JSONArray(images)); put("audio", audio ?: ""); put("project", project ?: "")
-    put("ser", seriesTitle ?: ""); put("sid", seriesId ?: 0L); put("epn", episodeNo); put("story", story)
-    put("cloudId", cloudId ?: ""); put("uid", uid ?: "")
+    put("ser", seriesTitle ?: ""); put("sid", seriesId ?: 0L); put("epn", episodeNo); put("story", story); put("cid", cloudId ?: ""); put("uid", uid ?: "")
 }
 
 private fun JSONObject.toVideo(): Video {
@@ -148,7 +154,7 @@ private fun JSONObject.toVideo(): Video {
         seriesId = optLong("sid", 0L).takeIf { it != 0L },
         episodeNo = optInt("epn", 0),
         story = optBoolean("story", false),
-        cloudId = optString("cloudId", "").takeIf { it.isNotBlank() },
+        cloudId = optString("cid", "").takeIf { it.isNotBlank() },
         uid = optString("uid", "").takeIf { it.isNotBlank() }
     )
 }
@@ -184,6 +190,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _landscape = MutableStateFlow(false)
     val landscape: StateFlow<Boolean> = _landscape.asStateFlow()
     fun setLandscape(on: Boolean) { _landscape.value = on }
+    private val _remote = MutableStateFlow<List<Video>>(emptyList())
+    /** Posts from other people. */
+    val remote: StateFlow<List<Video>> = _remote.asStateFlow()
+    private val _people = MutableStateFlow<Map<String, PersonInfo>>(emptyMap())
+    val people: StateFlow<Map<String, PersonInfo>> = _people.asStateFlow()
+    private val _found = MutableStateFlow<List<PersonInfo>>(emptyList())
+    val found: StateFlow<List<PersonInfo>> = _found.asStateFlow()
     private val watchLog = mutableMapOf<String, Long>()
     private val _breakKind = MutableStateFlow("break")
     /** "break" (watched for a long time) or "bedtime". */
@@ -293,6 +306,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     avatar = p.optString("avatar", "").takeIf { it.isNotBlank() },
                     banner = p.optString("banner", "").takeIf { it.isNotBlank() },
                     bannerVideo = p.optBoolean("bv"),
+                    avatarUrl = p.optString("au", "").takeIf { it.isNotBlank() },
+                    bannerUrl = p.optString("bu", "").takeIf { it.isNotBlank() },
                     bannerStartMs = p.optLong("bs", 0L),
                     bannerScale = p.optDouble("bsc", 1.0).toFloat(),
                     bannerOx = p.optDouble("box", 0.0).toFloat(),
@@ -343,7 +358,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         put("following", JSONArray(_following.value.toList()))
         val p = _profile.value
         put("profile", JSONObject().put("name", p.name).put("dn", p.displayName).put("bio", p.bio)
-            .put("avatar", p.avatar ?: "").put("banner", p.banner ?: "").put("bv", p.bannerVideo).put("bs", p.bannerStartMs).put("bsc", p.bannerScale.toDouble()).put("box", p.bannerOx.toDouble()).put("boy", p.bannerOy.toDouble()).put("ver", p.verified).put("vreq", p.verifyRequest).put("nca", p.nameChangedAt).put("uca", p.usernameChangedAt).put("private", p.isPrivate))
+            .put("avatar", p.avatar ?: "").put("banner", p.banner ?: "").put("bv", p.bannerVideo).put("au", p.avatarUrl ?: "").put("bu", p.bannerUrl ?: "").put("bs", p.bannerStartMs).put("bsc", p.bannerScale.toDouble()).put("box", p.bannerOx.toDouble()).put("boy", p.bannerOy.toDouble()).put("ver", p.verified).put("vreq", p.verifyRequest).put("nca", p.nameChangedAt).put("uca", p.usernameChangedAt).put("private", p.isPrivate))
         val s = _settings.value
         put("settings", JSONObject().put("notif", s.notifications).put("auto", s.autoplay).put("muted", s.muted)
             .put("theme", s.theme).put("accent", s.accent).put("onb", s.onboarded).put("prem", s.premium).put("email", s.email).put("coins", s.coins).put("brk", s.breakHours).put("keepwm", s.keepWatermark).put("dev", s.devMode).put("kids", s.kidsMode).put("pin", s.pinHash).put("pf", s.pinFails).put("plu", s.pinLockUntil).put("bed", s.bedtimeOn).put("bedS", s.bedStart).put("bedE", s.bedEnd).put("streak", s.streak).put("best", s.bestStreak).put("lday", s.lastDay))
@@ -386,16 +401,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun mutate(id: Long, f: (Video) -> Video) {
         _videos.update { l -> l.map { if (it.id == id) f(it) else it } }
+        _remote.update { l -> l.map { if (it.id == id) f(it) else it } }
         persist()
     }
 
     fun toggleLike(id: Long) {
+        adopt(id)
+        findVideo(id)?.let { v0 -> v0.cloudId?.let { cid -> val on = !v0.liked; viewModelScope.launch(Dispatchers.IO) { CloudShare.like(cid, on) } } }
         val v = _videos.value.firstOrNull { it.id == id } ?: return
         mutate(id) { it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1) }
         if (!v.liked) addEvent("You liked @${v.user}'s post", 1, id)
     }
 
     fun doubleTapLike(id: Long) {
+        adopt(id)
+        findVideo(id)?.let { v0 -> if (!v0.liked) v0.cloudId?.let { cid -> viewModelScope.launch(Dispatchers.IO) { CloudShare.like(cid, true) } } }
         val v = _videos.value.firstOrNull { it.id == id } ?: return
         if (v.liked) return
         mutate(id) { it.copy(liked = true, likes = it.likes + 1) }
@@ -403,18 +423,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleSave(id: Long) {
+        adopt(id)
         val v = _videos.value.firstOrNull { it.id == id } ?: return
         mutate(id) { it.copy(saved = !it.saved) }
         if (!v.saved) addEvent("You saved @${v.user}'s post", 3, id)
     }
 
     fun share(id: Long) {
+        adopt(id)
         val v = _videos.value.firstOrNull { it.id == id } ?: return
         mutate(id) { it.copy(shares = it.shares + 1) }
         addEvent("You shared @${v.user}'s post", 4, id)
     }
 
     fun addComment(id: Long, text: String) {
+        adopt(id)
+        findVideo(id)?.cloudId?.let { cid -> if (text.isNotBlank() && wordCount(text) <= 500) viewModelScope.launch(Dispatchers.IO) { CloudShare.addComment(cid, text.trim(), _profile.value.name); loadComments(id) } }
         if (text.isBlank() || wordCount(text) > 500) return
         val me = _profile.value.name
         val c = Comment(me, text.trim(), System.nanoTime(), System.currentTimeMillis())
@@ -423,8 +447,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         addEvent("You commented on @$owner's post: " + c.text.take(60), 2, id)
     }
 
-    fun deleteComment(id: Long, index: Int) = mutate(id) { v ->
+    fun deleteComment(id: Long, index: Int) {
+        findVideo(id)?.let { v0 ->
+            val c = v0.comments.getOrNull(index)
+            val cid = v0.cloudId
+            val doc = c?.let { commentDocs[id]?.get(it.id) }
+            if (cid != null && doc != null) viewModelScope.launch(Dispatchers.IO) { CloudShare.deleteComment(cid, doc) }
+        }
+        mutate(id) { v ->
         if (index in v.comments.indices) v.copy(comments = v.comments.filterIndexed { i, _ -> i != index }) else v
+        }
     }
 
     fun toggleCommentLike(id: Long, index: Int) = mutate(id) { v ->
@@ -436,6 +468,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleFollow(user: String) {
         val now = user !in _following.value
+        viewModelScope.launch(Dispatchers.IO) { CloudShare.uidOf(user)?.let { CloudShare.follow(it, now) } }
         _following.update { if (user in it) it - user else it + user }
         addEvent(if (now) "You followed @$user" else "You unfollowed @$user", 5)
         persist()
@@ -482,6 +515,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         persist()
         if (_settings.value.notifications) Notifier.send(ctx, "Posted on Twirlly", "Your edit is live on your profile.")
+        publishPending()
         onDone()
     }
 
@@ -579,6 +613,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun reportPost(id: Long, reason: String) {
         val v = _videos.value.firstOrNull { it.id == id }
         reports.add(JSONObject().put("post", id).put("user", v?.user ?: "").put("reason", reason).put("at", System.currentTimeMillis()))
+        v?.cloudId?.let { cid -> viewModelScope.launch(Dispatchers.IO) { CloudShare.report(cid, reason) } }
         _hidden.update { it + id }
         addEvent("You reported a post")
         persist()
@@ -666,8 +701,107 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         true
     } catch (e: Exception) { false }
 
+    // ---------------- sharing with other people ----------------
+    private val commentDocs = mutableMapOf<Long, Map<Long, String>>()
+    private var publishing = false
+
+    private fun findVideo(id: Long): Video? = _videos.value.firstOrNull { it.id == id } ?: _remote.value.firstOrNull { it.id == id }
+
+    private fun patchVideo(id: Long, f: (Video) -> Video) {
+        _videos.update { l -> l.map { if (it.id == id) f(it) else it } }
+        _remote.update { l -> l.map { if (it.id == id) f(it) else it } }
+    }
+
+    /** A post from someone else becomes part of your list once you like, save or comment on it. */
+    private fun adopt(id: Long) {
+        if (_videos.value.any { it.id == id }) return
+        val r = _remote.value.firstOrNull { it.id == id } ?: return
+        _videos.update { listOf(r) + it }
+    }
+
+    /** Loads other people's posts, refreshes counts, and brings back your own posts on a new phone. */
+    fun refreshRemote() {
+        if (!Cloud.online()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val me = Cloud.uid()
+            val posts = CloudShare.loadFeed(60)
+            val others = posts.filter { it.uid != me && it.user !in _blocked.value && it.id !in _hidden.value }
+            _videos.update { l ->
+                l.map { v ->
+                    val p = v.cloudId?.let { cid -> posts.firstOrNull { it.cloudId == cid } }
+                    if (p != null) v.copy(likes = p.likes) else v
+                }
+            }
+            _remote.value = others
+            val have = _videos.value.mapNotNull { it.cloudId }.toSet()
+            val missing = posts.filter { it.uid == me && it.cloudId !in have }
+            if (missing.isNotEmpty()) {
+                _videos.update { l -> missing.map { it.copy(local = true) } + l }
+                persist()
+            }
+            for (u in others.map { it.user }.distinct().take(25)) if (_people.value[u] == null) loadUserProfile(u)
+        }
+    }
+
+    /** Uploads your own posts that are not online yet. Private accounts are not shared. */
+    fun publishPending() {
+        if (publishing || !Cloud.online() || _profile.value.isPrivate || !_settings.value.onboarded) return
+        publishing = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val todo = _videos.value.filter { it.local && !it.story && it.cloudId == null && it.project != null }.sortedBy { it.createdAt }
+                for ((i, v) in todo.withIndex()) {
+                    toast("Uploading your post (" + (i + 1) + "/" + todo.size + ")...")
+                    val cid = CloudShare.publishPost(ctx, v, _profile.value)
+                    if (cid == null) { toast("Could not upload. It will try again later."); break }
+                    patchVideo(v.id) { it.copy(cloudId = cid, uid = Cloud.uid()) }
+                    persist()
+                    toast("Posted online")
+                }
+            } finally {
+                publishing = false
+            }
+        }
+    }
+
+    fun loadComments(id: Long) {
+        val cid = findVideo(id)?.cloudId ?: return
+        if (!Cloud.online()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = CloudShare.loadComments(cid)
+            commentDocs[id] = list.associate { it.second.id to it.first }
+            patchVideo(id) { it.copy(comments = list.map { p -> p.second }) }
+        }
+    }
+
+    fun loadUserProfile(username: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            CloudShare.person(username)?.let { p -> _people.update { it + (username to p) } }
+        }
+    }
+
+    fun searchPeople(q: String) {
+        if (q.trim().length < 2 || !Cloud.online()) { _found.value = emptyList(); return }
+        viewModelScope.launch(Dispatchers.IO) {
+            _found.value = CloudShare.search(q.trim().lowercase()).filter { it.username != _profile.value.name }
+        }
+    }
+
+    /** On a new phone the saved picture files do not exist, so the web addresses are used. */
+    private fun fixProfileImages() {
+        val p = _profile.value
+        var a = p.avatar
+        var b = p.banner
+        if (a != null && !a.startsWith("http") && !a.startsWith("content:") && !File(a).exists()) a = p.avatarUrl
+        if (b != null && !p.bannerVideo && !b.startsWith("http") && !b.startsWith("content:") && !File(b).exists()) b = p.bannerUrl
+        if (a == null) a = p.avatarUrl
+        if (b == null && !p.bannerVideo) b = p.bannerUrl
+        _profile.value = p.copy(avatar = a, banner = b)
+    }
+
     fun deletePost(id: Long) {
         val v = _videos.value.firstOrNull { it.id == id } ?: return
+        v.cloudId?.let { cid -> viewModelScope.launch(Dispatchers.IO) { CloudShare.deletePost(cid) } }
         // deleting the first episode removes the whole drama
         _videos.update { l -> l.filter { it.id != id && !(v.seriesId == v.id && it.seriesId == v.id) } }
         addEvent("Post deleted")
@@ -723,6 +857,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _profile.update { if (banner) it.copy(banner = f.absolutePath, bannerVideo = false, bannerStartMs = 0L, bannerScale = 1f, bannerOx = 0f, bannerOy = 0f) else it.copy(avatar = f.absolutePath) }
                 addEvent(if (banner) "Banner updated" else "Profile picture updated", 7)
                 persist()
+                if (Cloud.online()) {
+                    val url = CloudShare.uploadProfileImage(bytes, banner)
+                    if (url != null) { _profile.update { if (banner) it.copy(bannerUrl = url) else it.copy(avatarUrl = url) }; persist() }
+                }
             } catch (e: Exception) {
                 toast("Could not save the picture")
             }
@@ -798,6 +936,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (remote != null && remote.first.isNotBlank() && (!hasLocal || remote.second >= localTime)) {
             if (importJson(remote.first)) {
                 Cloud.markSynced(remote.first)
+                fixProfileImages()
                 _settings.update { it.copy(email = email.trim()) }
                 persist()
                 return@withContext _settings.value.onboarded
@@ -857,6 +996,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 persist()
                 return ce
             }
+        }
+        if (isPrivate && !old.isPrivate && Cloud.online()) {
+            CloudShare.deleteMyPosts()
+            _videos.update { l -> l.map { it.copy(cloudId = null) } }
+            persist()
         }
         return null
     }
