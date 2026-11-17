@@ -250,7 +250,7 @@ private class LiveSticker(val id: Long, val emoji: String, x0: Float, y0: Float)
     var rot by mutableFloatStateOf(0f)
 }
 
-private enum class Sheet { None, Effects, Stickers, Beauty, Gifts, Shop }
+private enum class Sheet { None, Effects, Stickers, Beauty, Gifts, Shop, More }
 
 @Composable
 private fun FloatingEmoji(f: Floater, onDone: () -> Unit) {
@@ -532,6 +532,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
     val inf = rememberInfiniteTransition(label = "pulse")
     val pulse by inf.animateFloat(0.4f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "p")
     val chatState = rememberLazyListState()
+    val extras = remember { LiveExtras() }
 
     fun toast(m: String) = Toast.makeText(ctx, m, Toast.LENGTH_SHORT).show()
     fun heart() { floaters.add(Floater(System.nanoTime(), null, (Random.nextFloat() - 0.5f) * 2f)) }
@@ -546,10 +547,12 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
     fun endLive() { isLive = false; onClose() }
     fun send(text: String) {
         if (text.isBlank()) return
+        if (!extras.allow(text)) { toast(extras.blockedMessage); return }
         messages.add(LiveMsg(System.nanoTime().toString(), profile.name, text.trim(), "chat"))
     }
     fun sendGift(g: Gift) {
         if (!vm.spendCoins(g.coins)) { sheet = Sheet.Shop; toast("Not enough coins"); return }
+        extras.goalDone += g.coins
         messages.add(LiveMsg(System.nanoTime().toString(), profile.name, "sent " + g.emoji + " " + g.name, "gift"))
         if (g.big) bursts.add(Burst(System.nanoTime(), g, profile.name))
         else repeat(3) { floaters.add(Floater(System.nanoTime() + it, g.emoji, (Random.nextFloat() - 0.5f) * 2f)) }
@@ -582,6 +585,8 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
         Box(Modifier.fillMaxSize()) {
             stickers.toList().forEach { s -> key(s.id) { StickerView(s) { stickers.remove(s) } } }
         }
+
+        LiveExtrasOverlay(extras)
 
         // soft fades instead of boxes
         Box(
@@ -636,6 +641,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
             ToolButton(if (micOn) Icons.Default.Mic else Icons.Default.MicOff, if (micOn) "Mic" else "Muted", !micOn) { micOn = !micOn }
             if (!front) ToolButton(if (torch) Icons.Default.FlashOn else Icons.Default.FlashOff, "Light", torch) { torch = !torch }
             ToolButton(Icons.Default.GridOn, "Grid", grid) { grid = !grid }
+            ToolButton(Icons.Default.Widgets, "More") { sheet = Sheet.More }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(top = 6.dp)) {
                 for (i in 1..5) Box(
                     Modifier.width(3.dp).height((4 + i * 3).dp).clip(RoundedCornerShape(2.dp))
@@ -860,6 +866,10 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                             }
                         }
                         Text("Test build: buttons add free coins until payments are connected.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                    }
+                    Sheet.More -> LiveMore(extras, messages.map { it.user }.distinct().filter { it != profile.name }) { w ->
+                        messages.add(LiveMsg(System.nanoTime().toString(), profile.name, w, "chat"))
+                        pinned = messages.last()
                     }
                     Sheet.None -> {}
                 }
