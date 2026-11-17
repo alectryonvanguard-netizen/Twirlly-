@@ -196,6 +196,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val remote: StateFlow<List<Video>> = _remote.asStateFlow()
     private val _people = MutableStateFlow<Map<String, PersonInfo>>(emptyMap())
     val people: StateFlow<Map<String, PersonInfo>> = _people.asStateFlow()
+    private val _myGifs = MutableStateFlow<List<String>>(emptyList())
+    /** GIFs you added yourself. */
+    val myGifs: StateFlow<List<String>> = _myGifs.asStateFlow()
+    fun addMyGif(url: String) { _myGifs.update { (listOf(url) + it).distinct().take(60) }; persist() }
+    fun removeMyGif(url: String) { _myGifs.update { l -> l.filter { it != url } }; persist() }
     private val _found = MutableStateFlow<List<PersonInfo>>(emptyList())
     val found: StateFlow<List<PersonInfo>> = _found.asStateFlow()
     private val watchLog = mutableMapOf<String, Long>()
@@ -340,6 +345,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _blocked.value = (o.optJSONArray("blocked") ?: JSONArray()).let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
             reports.clear()
             (o.optJSONArray("reports") ?: JSONArray()).let { a -> for (i in 0 until a.length()) reports.add(a.getJSONObject(i)) }
+            _myGifs.value = (o.optJSONArray("gifs") ?: JSONArray()).let { a -> (0 until a.length()).map { a.getString(it) } }
             lastEp.clear()
             o.optJSONObject("lastep")?.let { lo -> lo.keys().forEach { k -> lastEp[k.toLong()] = lo.getInt(k) } }
             watchLog.clear()
@@ -369,6 +375,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         put("hidden", JSONArray(_hidden.value.toList()))
         put("blocked", JSONArray(_blocked.value.toList()))
         put("reports", JSONArray().also { a -> reports.takeLast(50).forEach { a.put(it) } })
+        put("gifs", JSONArray(_myGifs.value))
         put("lastep", JSONObject().also { lo -> lastEp.forEach { (k, v) -> lo.put(k.toString(), v) } })
         put("wlog", JSONObject().also { wo -> watchLog.entries.sortedByDescending { it.key }.take(14).forEach { wo.put(it.key, it.value) } })
         put("events", JSONArray().also { a ->
@@ -987,6 +994,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _playlists.value = emptyMap()
         _hidden.value = emptySet()
         _blocked.value = emptySet()
+        _myGifs.value = emptyList()
         _drama.value = null
         _breakDue.value = false
         addEvent("Welcome to Twirlly")
