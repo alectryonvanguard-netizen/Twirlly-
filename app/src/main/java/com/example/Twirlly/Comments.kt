@@ -9,6 +9,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.sin
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -118,9 +131,10 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u ->
         if (u != null) scope.launch {
             sending = true
-            val url = CloudShare.uploadCommentImage(ctx, u)
+            val isGif = ctx.contentResolver.getType(u)?.contains("gif") == true
+            val url = if (isGif) CloudShare.uploadCommentGif(ctx, u) else CloudShare.uploadCommentImage(ctx, u)
             sending = false
-            if (url != null) { vm.addComment(v.id, text, url, false); text = "" }
+            if (url != null) { vm.addComment(v.id, text, url, isGif); text = "" }
             else Toast.makeText(ctx, "Could not upload the photo", Toast.LENGTH_SHORT).show()
         }
     }
@@ -134,22 +148,7 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
             FilterChip(selected = newest, onClick = { newest = true }, label = { Text("Newest") })
         }
         if (gifOpen) {
-            OutlinedTextField(
-                gifQuery, { gifQuery = it.take(40) }, singleLine = true, placeholder = { Text("Search GIFs") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = { IconButton(onClick = { gifOpen = false }) { Icon(Icons.Default.Close, "Close") } },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(50)
-            )
-            if (GIPHY_KEY.isBlank()) Text("GIFs are off. Add your free GIPHY key at the top of Comments.kt (GIPHY_KEY).", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
-            LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                gridItems(gifs) { g ->
-                    AsyncImage(
-                        model = g, imageLoader = loader, contentDescription = "GIF", contentScale = ContentScale.Crop,
-                        modifier = Modifier.height(110.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0x22888888))
-                            .clickable { vm.addComment(v.id, text, g, true); text = ""; gifOpen = false }
-                    )
-                }
-            }
+            GifPanel(vm, loader, Modifier.weight(1f), onPick = { m -> vm.addComment(v.id, text, m, true); text = ""; gifOpen = false }, onClose = { gifOpen = false })
         } else {
             if (items.isEmpty()) Text("No comments yet. Be the first!", color = Color.Gray, modifier = Modifier.padding(24.dp))
             LazyColumn(Modifier.weight(1f)) {
@@ -163,7 +162,10 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
                             }
                             if (c.text.isNotBlank()) Text(linkify(c.text, link), fontSize = 14.sp, color = Color.White)
                             c.media?.let { m ->
-                                AsyncImage(
+                                if (m.startsWith("anim:")) {
+                                    val p = m.split(":")
+                                    AnimatedEmoji(p.getOrElse(1) { "✨" }, p.getOrNull(2)?.toIntOrNull() ?: 0, 72.dp)
+                                } else AsyncImage(
                                     model = m, imageLoader = loader, contentDescription = if (c.gif) "GIF" else "Photo", contentScale = ContentScale.Fit,
                                     modifier = Modifier.padding(top = 6.dp).heightIn(max = 220.dp).clip(RoundedCornerShape(14.dp)).background(Color(0x22888888))
                                 )
@@ -207,6 +209,103 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
             ) { Text("GIF", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             IconButton(onClick = { if (text.isNotBlank()) { vm.addComment(v.id, text.trim()); text = "" } }, enabled = text.isNotBlank() && !sending) {
                 Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = if (text.isNotBlank()) MaterialTheme.colorScheme.primary else Color.Gray)
+            }
+        }
+    }
+}
+
+
+private val ANIMATED = listOf(
+    "🔥", "❤️", "😂", "😍", "🤩", "😭", "😱", "🥳", "👏", "🙌", "💯", "✨",
+    "🎉", "💀", "🤯", "😎", "🥺", "😘", "👀", "🚀", "💪", "🍿", "🌈", "⚡"
+)
+
+/** Animated reactions made by the app itself. They move on their own, no internet needed. */
+@Composable
+fun AnimatedEmoji(emoji: String, style: Int, dp: Dp) {
+    val inf = rememberInfiniteTransition(label = "ae")
+    val t by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart), label = "t")
+    val s = sin(t * 2f * PI.toFloat())
+    val move = when (style % 6) {
+        0 -> Modifier.graphicsLayer { scaleX = 1f + 0.2f * s; scaleY = 1f + 0.2f * s }
+        1 -> Modifier.graphicsLayer { rotationZ = 14f * s }
+        2 -> Modifier.graphicsLayer { translationY = -dp.toPx() * 0.18f * abs(s) }
+        3 -> Modifier.graphicsLayer { rotationY = t * 360f }
+        4 -> Modifier.graphicsLayer { translationX = 8f * s; scaleX = 1f + 0.1f * abs(s) }
+        else -> Modifier.graphicsLayer { val k = 1f + 0.25f * abs(s); scaleX = k; scaleY = k; rotationZ = 8f * s }
+    }
+    Box(Modifier.size(dp).then(move), contentAlignment = Alignment.Center) { Text(emoji, fontSize = (dp.value * 0.7f).sp) }
+}
+
+/** GIFs and animated reactions: built-in ones, your own, and (with a key) a web search. */
+@Composable
+private fun GifPanel(vm: AppViewModel, loader: ImageLoader, modifier: Modifier, onPick: (String) -> Unit, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val mine by vm.myGifs.collectAsState()
+    var tab by remember { mutableIntStateOf(0) }
+    var query by remember { mutableStateOf("") }
+    var found by remember { mutableStateOf<List<String>>(emptyList()) }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(tab, query) { if (tab == 2) found = searchGifs(query) }
+    val add = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u ->
+        if (u != null) scope.launch {
+            busy = true
+            val url = CloudShare.uploadCommentGif(ctx, u)
+            busy = false
+            if (url != null) vm.addMyGif(url) else Toast.makeText(ctx, "Could not add it. Use a GIF under 6 MB and sign in.", Toast.LENGTH_LONG).show()
+        }
+    }
+    Column(modifier) {
+        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Animated", "My GIFs", "Search").forEachIndexed { i, n -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(n) }) }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
+        }
+        when (tab) {
+            0 -> LazyVerticalGrid(GridCells.Fixed(4), Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                gridItems(ANIMATED.withIndex().toList()) { (i, e) ->
+                    Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Color(0x22888888)).clickable { onPick("anim:" + e + ":" + i) }.padding(8.dp), contentAlignment = Alignment.Center) {
+                        AnimatedEmoji(e, i, 56.dp)
+                    }
+                }
+            }
+            1 -> Column(Modifier.weight(1f)) {
+                Text("Add your own GIFs. They are saved in your account and you can send them any time. Press and hold one to remove it.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+                LazyVerticalGrid(GridCells.Fixed(3), Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item {
+                        Box(
+                            Modifier.height(100.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x33FF2D87))
+                                .clickable(enabled = !busy) {
+                                    if (!Cloud.online()) Toast.makeText(ctx, "Sign in to add your own GIFs", Toast.LENGTH_SHORT).show()
+                                    else add.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                },
+                            contentAlignment = Alignment.Center
+                        ) { Text(if (busy) "..." else "+ Add GIF", color = Color.White, fontWeight = FontWeight.Bold) }
+                    }
+                    gridItems(mine) { g ->
+                        AsyncImage(
+                            model = g, imageLoader = loader, contentDescription = "GIF", contentScale = ContentScale.Crop,
+                            modifier = Modifier.height(100.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x22888888))
+                                .pointerInput(g) { detectTapGestures(onTap = { onPick(g) }, onLongPress = { vm.removeMyGif(g) }) }
+                        )
+                    }
+                }
+            }
+            else -> Column(Modifier.weight(1f)) {
+                OutlinedTextField(
+                    query, { query = it.take(40) }, singleLine = true, placeholder = { Text("Search GIFs on the web") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(50)
+                )
+                if (GIPHY_KEY.isBlank()) Text("Optional: add a free GIPHY key at the top of Comments.kt (GIPHY_KEY) to search the web. The built-in and your own GIFs work without it.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
+                LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    gridItems(found) { g ->
+                        AsyncImage(
+                            model = g, imageLoader = loader, contentDescription = "GIF", contentScale = ContentScale.Crop,
+                            modifier = Modifier.height(110.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0x22888888)).clickable { onPick(g) }
+                        )
+                    }
+                }
             }
         }
     }
