@@ -192,7 +192,7 @@ object CloudShare {
             val post = db().collection("posts").document(cloudId)
             val b = db().batch()
             val cm = hashMapOf<String, Any>("uid" to uid, "username" to username, "text" to text.take(3000), "createdAt" to FieldValue.serverTimestamp())
-            if (media != null && media.startsWith("https://")) { cm["media"] = media; cm["mediaKind"] = if (gif) "gif" else "photo" }
+            if (media != null && (media.startsWith("https://") || media.startsWith("anim:"))) { cm["media"] = media; cm["mediaKind"] = if (gif) "gif" else "photo" }
             b.set(post.collection("comments").document(), cm)
             b.update(post, "commentsCount", FieldValue.increment(1L))
             b.commit().await()
@@ -220,6 +220,20 @@ object CloudShare {
             val bytes = ByteArrayOutputStream()
             out.compress(Bitmap.CompressFormat.JPEG, 82, bytes)
             uploadBytes(bytes.toByteArray(), "users/$uid/media/c_" + System.currentTimeMillis() + ".jpg", "image/jpeg")
+        } catch (e: Exception) { null }
+    }
+
+    /** A GIF (or animated picture) up to 6 MB, uploaded as it is so it keeps moving. */
+    suspend fun uploadCommentGif(ctx: Context, uri: android.net.Uri): String? {
+        val uid = Cloud.uid() ?: return null
+        return try {
+            val mime = ctx.contentResolver.getType(uri) ?: "image/gif"
+            val len = ctx.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: 0L
+            if (len > 6_000_000L) return null
+            val ext = if (mime.contains("webp")) "webp" else if (mime.contains("png")) "png" else if (mime.contains("jpeg")) "jpg" else "gif"
+            val ref = FirebaseStorage.getInstance().reference.child("users/$uid/media/g_" + System.currentTimeMillis() + "." + ext)
+            ref.putFile(uri, StorageMetadata.Builder().setContentType(mime).build()).await()
+            ref.downloadUrl.await().toString()
         } catch (e: Exception) { null }
     }
 
