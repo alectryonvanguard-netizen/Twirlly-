@@ -25,6 +25,8 @@ import kotlinx.coroutines.launch
 /**
 
 * Google Play payments: coin packs (consumable) and Premium (subscription).
+
+* Create these products in Play Console with exactly these ids.
   */
   object Pay {
   
@@ -40,6 +42,7 @@ import kotlinx.coroutines.launch
   const val PREMIUM_MONTHLY = "twirlly_premium_monthly"
   const val PREMIUM_YEARLY = "twirlly_premium_yearly"
   
+  /** Real prices from Google Play, in the user's own currency. */
   val prices = mutableStateMapOf<String, String>()
   
   private val details = HashMap<String, ProductDetails>()
@@ -78,7 +81,9 @@ import kotlinx.coroutines.launch
      .setListener(
          PurchasesUpdatedListener { result, purchases ->
              if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                 purchases?.forEach { handle(it) }
+                 purchases?.forEach { purchase ->
+                     handle(purchase)
+                 }
              } else if (
                  result.responseCode != BillingClient.BillingResponseCode.USER_CANCELED
              ) {
@@ -145,7 +150,7 @@ import kotlinx.coroutines.launch
      }
 
      override fun onBillingServiceDisconnected() {
-         // A later startConnection call can reconnect.
+         // Billing can reconnect when startConnection is called again.
      }
  })
   
@@ -190,48 +195,46 @@ import kotlinx.coroutines.launch
   
   }
   
-  /**
+  /** Opens the Google Play payment sheet. */
+  fun buy(activity: Activity, productId: String): String? {
   
-  * Opens the Google Play payment sheet.
-    */
-    fun buy(activity: Activity, productId: String): String? {
-    
-    val c = client
-    ?: return "Payments are not ready yet. Try again in a moment."
-    
-    val pd = details[productId]
-    ?: return "This item is not available yet. It must be created and active in Google Play."
-    
-    if (!Cloud.online()) {
-    return "Sign in to your account first so your purchase is saved to it."
-    }
-    
-    val params = BillingFlowParams.ProductDetailsParams.newBuilder()
-    .setProductDetails(pd)
-    .apply {
-    val offer = pd.subscriptionOfferDetails
-    ?.firstOrNull()
-    ?.offerToken
-    
-         if (offer != null) {
-         setOfferToken(offer)
-     }
+   val c = client
+     ?: return "Payments are not ready yet. Try again in a moment."
+
+ val pd = details[productId]
+     ?: return "This item is not available yet. It must be created and active in Google Play."
+
+ if (!Cloud.online()) {
+     return "Sign in to your account first so your purchase is saved to it."
  }
- .build()
-    
-    val result = c.launchBillingFlow(
-    activity,
-    BillingFlowParams.newBuilder()
-    .setProductDetailsParamsList(listOf(params))
-    .build()
-    )
-    
-    return if (
-    result.responseCode == BillingClient.BillingResponseCode.OK
-    ) {
-    null
-    } else {
-    "Could not open Google Play."
-    }
-    }
+
+ val params = BillingFlowParams.ProductDetailsParams.newBuilder()
+     .setProductDetails(pd)
+     .apply {
+         val offer = pd.subscriptionOfferDetails
+             ?.firstOrNull()
+             ?.offerToken
+
+         if (offer != null) {
+             setOfferToken(offer)
+         }
+     }
+     .build()
+
+ val result = c.launchBillingFlow(
+     activity,
+     BillingFlowParams.newBuilder()
+         .setProductDetailsParamsList(listOf(params))
+         .build()
+ )
+
+ return if (
+     result.responseCode == BillingClient.BillingResponseCode.OK
+ ) {
+     null
+ } else {
+     "Could not open Google Play."
+ }
+  
+  }
   }
