@@ -69,6 +69,7 @@ import kotlin.math.max
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.text.KeyboardActions
@@ -510,6 +511,9 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
     var filter by remember { mutableIntStateOf(0) }
     var beauty by remember { mutableFloatStateOf(0.3f) }
     var exposure by remember { mutableFloatStateOf(0f) }
+    var contrast by remember { mutableFloatStateOf(1f) }
+    var saturation by remember { mutableFloatStateOf(1f) }
+    var warmth by remember { mutableFloatStateOf(0f) }
     var grid by remember { mutableStateOf(false) }
     var sheet by remember { mutableStateOf(Sheet.None) }
     var effectTab by remember { mutableIntStateOf(0) }
@@ -571,7 +575,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
             }
         } else {
             Box(Modifier.fillMaxSize().graphicsLayer { scaleX = if (effect == 6) -1f else 1f }) {
-                CameraPreview(front, torch, zoom, { }, Modifier.fillMaxSize(), filterArray(filter))
+                CameraPreview(front, torch, zoom, { }, Modifier.fillMaxSize(), liveMatrix(filter, contrast, saturation, warmth))
             }
             EffectLayer(effect, beauty, exposure)
             if (grid) Canvas(Modifier.fillMaxSize()) {
@@ -631,9 +635,10 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
 
         // tool rail (no container)
         Column(
-            Modifier.align(Alignment.CenterEnd).padding(end = 8.dp),
+            Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            ToolButton(Icons.Default.Filter, "Filters", filter != 0) { effectTab = 3; sheet = Sheet.Effects }
             ToolButton(Icons.Default.FlipCameraAndroid, "Flip") { front = !front }
             ToolButton(Icons.Default.AutoAwesome, "Effects", effect != 0) { sheet = Sheet.Effects }
             ToolButton(Icons.Default.EmojiEmotions, "Stickers", stickers.isNotEmpty()) { sheet = Sheet.Stickers }
@@ -675,6 +680,7 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                     color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, style = TextStyle(shadow = SOFT_SHADOW)
                 )
                 Spacer(Modifier.height(4.dp))
+                ToolsRow({ effectTab = 0; sheet = Sheet.Effects }, { effectTab = 3; sheet = Sheet.Effects }, { sheet = Sheet.Stickers }, { sheet = Sheet.Beauty }, { sheet = Sheet.More }, { sheet = Sheet.Gifts })
                 LazyColumn(Modifier.height(130.dp).fillMaxWidth(0.8f), state = chatState) {
                     items(messages) { m ->
                         Text(
@@ -703,6 +709,8 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) { Text("End LIVE", color = Color.White, fontWeight = FontWeight.Bold) }
             } else {
+                ToolsRow({ effectTab = 0; sheet = Sheet.Effects }, { effectTab = 3; sheet = Sheet.Effects }, { sheet = Sheet.Stickers }, { sheet = Sheet.Beauty }, { sheet = Sheet.More }, { sheet = Sheet.Gifts })
+                Spacer(Modifier.height(8.dp))
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TOPICS.forEachIndexed { i, n ->
                         Box(
@@ -765,28 +773,9 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                         }
                     }
                     Sheet.Stickers -> {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            STICKER_TABS.forEachIndexed { i, (n, _) ->
-                                val locked = i >= 3 && !settings.premium
-                                Box(
-                                    Modifier.clip(RoundedCornerShape(50))
-                                        .background(if (stickerTab == i) BRAND_GRADIENT else Brush.horizontalGradient(listOf(Color.White.copy(alpha = 0.1f), Color.White.copy(alpha = 0.1f))))
-                                        .clickable { if (locked) premiumAsk = true else stickerTab = i }.padding(horizontal = 16.dp, vertical = 7.dp)
-                                ) { Text(if (locked) "$n ★" else n, color = Color.White, fontWeight = FontWeight.Medium) }
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Text("Tap to add. Drag, pinch and twist to place it. Double-tap a sticker to remove it.", color = Color.Gray, fontSize = 12.sp)
-                        Spacer(Modifier.height(6.dp))
-                        LazyVerticalGrid(GridCells.Fixed(6), Modifier.height(230.dp)) {
-                            gridItems(STICKER_TABS[stickerTab].second) { e ->
-                                Text(
-                                    e, fontSize = 30.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    modifier = Modifier.padding(6.dp).clickable {
-                                        if (stickers.size < 30) stickers.add(LiveSticker(System.nanoTime(), e, 380f + Random.nextFloat() * 120f, 700f + Random.nextFloat() * 200f))
-                                    }
-                                )
-                            }
+                        Text("Pick any emoji. It lands on the screen: drag, pinch and twist it. Double-tap a sticker to remove it.", color = Color.Gray, fontSize = 12.sp)
+                        EmojiPicker(Modifier.fillMaxWidth().height(320.dp)) { e ->
+                            if (stickers.size < 30) stickers.add(LiveSticker(System.nanoTime(), e, 380f + Random.nextFloat() * 120f, 700f + Random.nextFloat() * 200f))
                         }
                         if (stickers.isNotEmpty()) TextButton(onClick = { stickers.clear() }) { Text("Remove all stickers") }
                     }
@@ -799,6 +788,13 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                         Slider(value = exposure, onValueChange = { exposure = it }, valueRange = -1f..1f)
                         Text("Zoom", color = Color.White, fontSize = 13.sp)
                         Slider(value = zoom, onValueChange = { zoom = it })
+                        Text("Contrast", color = Color.White, fontSize = 13.sp)
+                        Slider(value = contrast, onValueChange = { contrast = it }, valueRange = 0.6f..1.6f)
+                        Text("Colour strength", color = Color.White, fontSize = 13.sp)
+                        Slider(value = saturation, onValueChange = { saturation = it }, valueRange = 0f..2f)
+                        Text("Warmth", color = Color.White, fontSize = 13.sp)
+                        Slider(value = warmth, onValueChange = { warmth = it }, valueRange = -1f..1f)
+                        TextButton(onClick = { contrast = 1f; saturation = 1f; warmth = 0f }) { Text("Reset colours") }
                     }
                     Sheet.Gifts -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -860,12 +856,16 @@ fun LiveScreen(vm: AppViewModel, preview: Boolean, onClose: () -> Unit) {
                                 }
                                 Box(
                                     Modifier.clip(RoundedCornerShape(50)).background(BRAND_GRADIENT)
-                                        .clickable { vm.addCoins(p.coins); toast("Test coins added. Real payment is not connected yet.") }
+                                        .clickable {
+                                            val id = Pay.coinId(p.coins)
+                                            val act = ctx as? android.app.Activity
+                                            if (act != null && id != null) { val err = Pay.buy(act, id); if (err != null) toast(err) }
+                                        }
                                         .padding(horizontal = 16.dp, vertical = 8.dp)
-                                ) { Text(p.price, color = Color.White, fontWeight = FontWeight.Bold) }
+                                ) { Text(Pay.prices[Pay.coinId(p.coins) ?: ""] ?: p.price, color = Color.White, fontWeight = FontWeight.Bold) }
                             }
                         }
-                        Text("Test build: buttons add free coins until payments are connected.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                        Text("Payments are handled by Google Play. Coins are added to your account after the server checks the purchase.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
                     }
                     Sheet.More -> LiveMore(extras, messages.map { it.user }.distinct().filter { it != profile.name }) { w ->
                         messages.add(LiveMsg(System.nanoTime().toString(), profile.name, w, "chat"))
@@ -902,6 +902,37 @@ private fun FilterGrid(sel: Int, premium: Boolean, onPick: (Int) -> Unit, onLock
                 )
                 Text(if (locked) FILTER_NAMES[i] + " ★" else FILTER_NAMES[i], color = Color.White, fontSize = 11.sp, maxLines = 1)
             }
+        }
+    }
+}
+
+
+/** One colour matrix from the chosen filter and the contrast, colour strength and warmth sliders. Null when nothing changed. */
+private fun liveMatrix(filter: Int, contrast: Float, saturation: Float, warmth: Float): FloatArray? {
+    val base = filterArray(filter)
+    if (base == null && contrast == 1f && saturation == 1f && warmth == 0f) return null
+    val cm = android.graphics.ColorMatrix(base ?: floatArrayOf(1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))
+    val sat = android.graphics.ColorMatrix()
+    sat.setSaturation(saturation)
+    cm.postConcat(sat)
+    val t = (1f - contrast) * 128f + warmth * 0f
+    cm.postConcat(android.graphics.ColorMatrix(floatArrayOf(contrast, 0f, 0f, 0f, t + warmth * 28f, 0f, contrast, 0f, 0f, t, 0f, 0f, contrast, 0f, t - warmth * 28f, 0f, 0f, 0f, 1f, 0f)))
+    return cm.array
+}
+
+
+/** All the LIVE tools in one row you can always see: effects, filters, stickers, beauty, more and gifts. */
+@Composable
+private fun ToolsRow(onEffects: () -> Unit, onFilters: () -> Unit, onStickers: () -> Unit, onBeauty: () -> Unit, onMore: () -> Unit, onGifts: () -> Unit) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(
+            "✨ Effects" to onEffects, "🎨 Filters" to onFilters, "😀 Stickers" to onStickers,
+            "💄 Beauty" to onBeauty, "🧰 More" to onMore, "🎁 Gifts" to onGifts
+        ).forEach { (label, click) ->
+            Box(
+                Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.18f)).clickable(onClick = click)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) { Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
         }
     }
 }
