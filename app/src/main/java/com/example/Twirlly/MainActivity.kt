@@ -137,7 +137,9 @@ fun TwirllyApp(vm: AppViewModel, link: String? = null, onLink: () -> Unit = {}) 
     val remoteAll by vm.remote.collectAsState()
     val settings by vm.settings.collectAsState()
     val drama by vm.drama.collectAsState()
-    LaunchedEffect(settings.email, settings.onboarded) { if (settings.onboarded && Cloud.online()) { vm.refreshRemote(); vm.publishPending() } }
+    val payCtx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { Pay.start(payCtx.applicationContext) { _, msg -> android.widget.Toast.makeText(payCtx, msg, android.widget.Toast.LENGTH_LONG).show() } }
+    LaunchedEffect(settings.email, settings.onboarded) { if (settings.onboarded && Cloud.online()) { vm.refreshRemote(); vm.publishPending(); vm.startWallet() } }
     val breakDue by vm.breakDue.collectAsState()
     val breakKind by vm.breakKind.collectAsState()
     var pinAction by remember { mutableStateOf<(() -> Unit)?>(null) }
