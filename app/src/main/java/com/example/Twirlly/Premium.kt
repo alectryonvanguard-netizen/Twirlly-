@@ -78,6 +78,9 @@ private fun PlanCard(title: String, price: String, best: Boolean, selected: Bool
 @Composable
 fun PremiumDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     val s by vm.settings.collectAsState()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val trial by vm.trialUntil.collectAsState()
+    val paid by vm.paidPremium.collectAsState()
     var plan by remember { mutableIntStateOf(1) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -97,18 +100,33 @@ fun PremiumDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                     }
                 }
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    if (!s.premium) {
-                        PlanCard("Monthly", "4.99 per month", false, plan == 0) { plan = 0 }
-                        PlanCard("Yearly", "39.99 per year - save 33%", true, plan == 1) { plan = 1 }
-                        Button(onClick = { vm.setPremium(true); onDismiss() }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                            Text("Activate Premium")
-                        }
+                    if (!paid) {
+                        val days = ((trial - System.currentTimeMillis() + 86_399_999L) / 86_400_000L).toInt()
                         Text(
-                            "Test build: payment is not connected yet, so this switches Premium on for this phone.",
+                            if (days > 0) "🎁 Free first week: $days day(s) left, all Premium tools are on." else if (trial > 0L) "Your free first week has ended." else "New accounts get 1 week of Premium free. Create an account to get yours.",
+                            color = Color(0xFFFFC93C), fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp)
+                        )
+                    }
+                    if (!paid) {
+                        PlanCard("Monthly", (Pay.prices[Pay.PREMIUM_MONTHLY] ?: "4.99") + " per month", false, plan == 0) { plan = 0 }
+                        PlanCard("Yearly", (Pay.prices[Pay.PREMIUM_YEARLY] ?: "39.99") + " per year - save 33%", true, plan == 1) { plan = 1 }
+                        Button(
+                            onClick = {
+                                val id = if (plan == 0) Pay.PREMIUM_MONTHLY else Pay.PREMIUM_YEARLY
+                                val act = ctx as? android.app.Activity
+                                if (act != null) {
+                                    val err = Pay.buy(act, id)
+                                    if (err != null) android.widget.Toast.makeText(ctx, err, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                        ) { Text("Subscribe") }
+                        Text(
+                            "Billed by Google Play. Cancel any time in Google Play > Subscriptions.",
                             color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)
                         )
                     } else {
-                        OutlinedButton(onClick = { vm.setPremium(false) }) { Text("Turn Premium off (test)") }
+                        Text(if (paid) "Manage or cancel in Google Play > Subscriptions." else "Your free week of Premium is on. Subscribe to keep it after it ends.", color = Color.Gray, fontSize = 12.sp)
                     }
                     Spacer(Modifier.height(10.dp))
                     Text("Included", fontWeight = FontWeight.Bold, fontSize = 17.sp)
