@@ -98,6 +98,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
     var deleteStage by remember { mutableIntStateOf(0) }
     val deleteScope = rememberCoroutineScope()
     var screenTimeOpen by remember { mutableStateOf(false) }
+    var shopOpen by remember { mutableStateOf(false) }
     var verifyOpen by remember { mutableStateOf(false) }
     var rewardsOpen by remember { mutableStateOf(false) }
     var kidsSetup by remember { mutableStateOf(false) }
@@ -171,6 +172,13 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
                     }
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Color.White)
                 }
+            }
+
+            Section("Payments")
+            SettingsCard {
+                Row3(Icons.Default.MonetizationOn, s.coins.toString() + " coins", "Buy coins for LIVE gifts", onClick = { shopOpen = true })
+                Row3(Icons.Default.Star, "Premium", if (s.premium) "Active" else "Pro tools, no watermark, themes", onClick = { premiumOpen = true })
+                Row3(Icons.Default.Restore, "Restore purchases", "If you paid and it is not added yet", onClick = { Pay.restore() })
             }
 
             Section("Account")
@@ -327,6 +335,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onEditProfile: () -> Un
         }
     }
     if (screenTimeOpen) ScreenTimeDialog(vm) { screenTimeOpen = false }
+    if (shopOpen) CoinShopSheet(vm) { shopOpen = false }
     if (verifyOpen) VerificationDialog(vm) { verifyOpen = false }
     if (rewardsOpen) RewardsDialog(vm) { rewardsOpen = false }
     if (blockedOpen) {
