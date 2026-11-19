@@ -24,6 +24,14 @@ object CloudPay {
         }
     }
 
+    /** When the account was made, from the server clock. Used for the free first week. */
+    suspend fun createdAt(): Long {
+        val uid = try { FirebaseAuth.getInstance().currentUser?.uid } catch (e: Exception) { null } ?: return 0L
+        return try {
+            FirebaseFirestore.getInstance().collection("users").document(uid).get().await().getTimestamp("createdAt")?.toDate()?.time ?: 0L
+        } catch (e: Exception) { 0L }
+    }
+
     suspend fun spend(coins: Int): Boolean = try {
         fn().getHttpsCallable("spendCoins").call(mapOf("coins" to coins)).await()
         true
