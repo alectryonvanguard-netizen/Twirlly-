@@ -17,6 +17,11 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.PI
@@ -123,6 +128,7 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
     var gifQuery by remember { mutableStateOf("") }
     var gifs by remember { mutableStateOf<List<String>>(emptyList()) }
     var sending by remember { mutableStateOf(false) }
+    var emojiOpen by remember { mutableStateOf(false) }
     val link = MaterialTheme.colorScheme.primary
     val loader = remember {
         ImageLoader.Builder(ctx).components { if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory()) else add(GifDecoder.Factory()) }.build()
@@ -136,6 +142,21 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
             sending = false
             if (url != null) { vm.addComment(v.id, text, url, isGif); text = "" }
             else Toast.makeText(ctx, "Could not upload the photo", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val videoPick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u ->
+        if (u != null) scope.launch {
+            sending = true
+            val ms = withContext(Dispatchers.IO) { videoDuration(ctx, u.toString()) }
+            if (ms > 5500L) {
+                sending = false
+                Toast.makeText(ctx, "Short videos can be up to 5 seconds", Toast.LENGTH_LONG).show()
+            } else {
+                val url = CloudShare.uploadCommentVideo(ctx, u)
+                sending = false
+                if (url != null) { vm.addComment(v.id, text, url, false, true); text = "" }
+                else Toast.makeText(ctx, "Could not upload it. Keep it under 15 MB.", Toast.LENGTH_LONG).show()
+            }
         }
     }
     val items = cur.comments.withIndex().toList().let { l -> if (newest) l.sortedByDescending { it.value.time } else l.sortedByDescending { it.value.likes } }
@@ -162,7 +183,8 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
                             }
                             if (c.text.isNotBlank()) Text(linkify(c.text, link), fontSize = 14.sp, color = Color.White)
                             c.media?.let { m ->
-                                if (m.startsWith("anim:")) {
+                                if (c.video) CommentVideo(m)
+                                else if (m.startsWith("anim:")) {
                                     val p = m.split(":")
                                     AnimatedEmoji(p.getOrElse(1) { "✨" }, p.getOrNull(2)?.toIntOrNull() ?: 0, 72.dp)
                                 } else AsyncImage(
@@ -185,7 +207,8 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
                     }
                 }
             }
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (emojiOpen) EmojiPicker(Modifier.fillMaxWidth().height(260.dp)) { text += it }
+            else Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 QUICK.forEach { e -> Text(e, fontSize = 22.sp, modifier = Modifier.clickable { text += e }) }
             }
         }
@@ -204,9 +227,12 @@ fun CommentsSheet(v: Video, vm: AppViewModel) {
                 if (!Cloud.online()) Toast.makeText(ctx, "Sign in to send photos", Toast.LENGTH_SHORT).show()
                 else pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }, enabled = !sending) { Icon(Icons.Default.Image, "Photo", tint = Color.White) }
-            Box(
-                Modifier.clip(RoundedCornerShape(8.dp)).border(1.5.dp, Color.White, RoundedCornerShape(8.dp)).clickable { gifOpen = !gifOpen }.padding(horizontal = 6.dp, vertical = 2.dp)
-            ) { Text("GIF", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+            IconButton(onClick = { emojiOpen = !emojiOpen }) { Icon(Icons.Default.EmojiEmotions, "Emoji", tint = Color.White) }
+            Text("GIF", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { gifOpen = !gifOpen }.padding(horizontal = 6.dp, vertical = 8.dp))
+            IconButton(onClick = {
+                if (!Cloud.online()) Toast.makeText(ctx, "Sign in to send a short video", Toast.LENGTH_SHORT).show()
+                else videoPick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+            }, enabled = !sending) { Icon(Icons.Default.PlayArrow, "Short video", tint = Color.White, modifier = Modifier.size(22.dp)) }
             IconButton(onClick = { if (text.isNotBlank()) { vm.addComment(v.id, text.trim()); text = "" } }, enabled = text.isNotBlank() && !sending) {
                 Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = if (text.isNotBlank()) MaterialTheme.colorScheme.primary else Color.Gray)
             }
@@ -308,5 +334,34 @@ private fun GifPanel(vm: AppViewModel, loader: ImageLoader, modifier: Modifier, 
                 }
             }
         }
+    }
+}
+
+
+/** A short video in a comment: it loops by itself without sound, like a GIF. Tap it to hear it. Only a small play triangle shows. */
+@Composable
+private fun CommentVideo(url: String) {
+    val ctx = LocalContext.current
+    var sound by remember { mutableStateOf(false) }
+    val player = remember(url) {
+        ExoPlayer.Builder(ctx).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            repeatMode = Player.REPEAT_MODE_ONE
+            volume = 0f
+            prepare()
+            playWhenReady = true
+        }
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    LaunchedEffect(sound) { player.volume = if (sound) 1f else 0f }
+    Box(
+        Modifier.padding(top = 6.dp).size(150.dp, 190.dp).clip(RoundedCornerShape(14.dp)).background(Color(0x22888888)).clickable { sound = !sound }
+    ) {
+        AndroidView(
+            factory = { c -> android.view.LayoutInflater.from(c).inflate(R.layout.banner_player, null, false) as PlayerView },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (!sound) Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).size(18.dp))
     }
 }
