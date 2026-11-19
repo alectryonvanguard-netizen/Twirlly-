@@ -186,13 +186,13 @@ object CloudShare {
         } catch (_: Exception) {}
     }
 
-    suspend fun addComment(cloudId: String, text: String, username: String, media: String? = null, gif: Boolean = false) {
+    suspend fun addComment(cloudId: String, text: String, username: String, media: String? = null, gif: Boolean = false, video: Boolean = false) {
         val uid = Cloud.uid() ?: return
         try {
             val post = db().collection("posts").document(cloudId)
             val b = db().batch()
             val cm = hashMapOf<String, Any>("uid" to uid, "username" to username, "text" to text.take(3000), "createdAt" to FieldValue.serverTimestamp())
-            if (media != null && (media.startsWith("https://") || media.startsWith("anim:"))) { cm["media"] = media; cm["mediaKind"] = if (gif) "gif" else "photo" }
+            if (media != null && (media.startsWith("https://") || media.startsWith("anim:"))) { cm["media"] = media; cm["mediaKind"] = if (video) "video" else if (gif) "gif" else "photo" }
             b.set(post.collection("comments").document(), cm)
             b.update(post, "commentsCount", FieldValue.increment(1L))
             b.commit().await()
@@ -201,7 +201,7 @@ object CloudShare {
 
     suspend fun loadComments(cloudId: String): List<Pair<String, Comment>> = try {
         db().collection("posts").document(cloudId).collection("comments").orderBy("createdAt").limit(200).get().await().documents.map { d ->
-            Pair(d.id, Comment(d.getString("username") ?: "user", d.getString("text") ?: "", d.id.hashCode().toLong(), d.getTimestamp("createdAt")?.toDate()?.time ?: 0L, media = d.getString("media"), gif = d.getString("mediaKind") == "gif"))
+            Pair(d.id, Comment(d.getString("username") ?: "user", d.getString("text") ?: "", d.id.hashCode().toLong(), d.getTimestamp("createdAt")?.toDate()?.time ?: 0L, media = d.getString("media"), gif = d.getString("mediaKind") == "gif", video = d.getString("mediaKind") == "video"))
         }
     } catch (e: Exception) { emptyList() }
 
@@ -220,6 +220,18 @@ object CloudShare {
             val bytes = ByteArrayOutputStream()
             out.compress(Bitmap.CompressFormat.JPEG, 82, bytes)
             uploadBytes(bytes.toByteArray(), "users/$uid/media/c_" + System.currentTimeMillis() + ".jpg", "image/jpeg")
+        } catch (e: Exception) { null }
+    }
+
+    /** A short video (5 seconds or less, up to 15 MB) that plays like a GIF in comments. */
+    suspend fun uploadCommentVideo(ctx: Context, uri: android.net.Uri): String? {
+        val uid = Cloud.uid() ?: return null
+        return try {
+            val len = ctx.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: 0L
+            if (len > 15_000_000L) return null
+            val ref = FirebaseStorage.getInstance().reference.child("users/$uid/media/v_" + System.currentTimeMillis() + ".mp4")
+            ref.putFile(uri, StorageMetadata.Builder().setContentType("video/mp4").build()).await()
+            ref.downloadUrl.await().toString()
         } catch (e: Exception) { null }
     }
 
