@@ -19,7 +19,7 @@ import java.util.concurrent.Executors
 data class Comment(
     val user: String, val text: String, val id: Long = 0L, val time: Long = 0L,
     val likes: Int = 0, val liked: Boolean = false,
-    val media: String? = null, val gif: Boolean = false
+    val media: String? = null, val gif: Boolean = false, val video: Boolean = false
 )
 
 fun wordCount(s: String): Int = s.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
@@ -129,7 +129,7 @@ private fun Video.toJson(): JSONObject = JSONObject().apply {
     put("liked", liked); put("saved", saved); put("shares", shares); put("t", createdAt)
     put("comments", JSONArray().also { arr ->
         comments.forEach {
-            arr.put(JSONObject().put("u", it.user).put("x", it.text).put("i", it.id).put("t", it.time).put("l", it.likes).put("k", it.liked).put("m", it.media ?: "").put("g", it.gif))
+            arr.put(JSONObject().put("u", it.user).put("x", it.text).put("i", it.id).put("t", it.time).put("l", it.likes).put("k", it.liked).put("m", it.media ?: "").put("g", it.gif).put("vd", it.video))
         }
     })
     put("images", JSONArray(images)); put("audio", audio ?: ""); put("project", project ?: "")
@@ -145,7 +145,7 @@ private fun JSONObject.toVideo(): Video {
         liked = optBoolean("liked"), saved = optBoolean("saved"), shares = optInt("shares"),
         comments = (0 until cs.length()).map {
             val o = cs.getJSONObject(it)
-            Comment(o.getString("u"), o.getString("x"), o.optLong("i"), o.optLong("t"), o.optInt("l"), o.optBoolean("k"), media = o.optString("m", "").takeIf { it.isNotBlank() }, gif = o.optBoolean("g"))
+            Comment(o.getString("u"), o.getString("x"), o.optLong("i"), o.optLong("t"), o.optInt("l"), o.optBoolean("k"), media = o.optString("m", "").takeIf { it.isNotBlank() }, gif = o.optBoolean("g"), video = o.optBoolean("vd"))
         },
         createdAt = optLong("t"),
         images = (0 until imgs.length()).map { imgs.getString(it) },
@@ -242,7 +242,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         watchLog[key] = (watchLog[key] ?: 0L) + 1L
         watchedSecs += 1
         if (watchedSecs % 30L == 0L) persist()
-        if (watchedSecs % 60L == 0L) purgeStories()
+        if (watchedSecs % 60L == 0L) { purgeStories(); applyPremium() }
         if (watchedSecs % 1800L == 0L) housekeeping()
         val st = _settings.value
         if (st.bedtimeOn && now >= bedSnoozeUntil && inBedtime(st.bedStart, st.bedEnd)) {
@@ -444,12 +444,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         addEvent("You shared @${v.user}'s post", 4, id)
     }
 
-    fun addComment(id: Long, text: String, media: String? = null, gif: Boolean = false) {
+    fun addComment(id: Long, text: String, media: String? = null, gif: Boolean = false, video: Boolean = false) {
         adopt(id)
         if ((text.isBlank() && media == null) || wordCount(text) > 500) return
-        findVideo(id)?.cloudId?.let { cid -> viewModelScope.launch(Dispatchers.IO) { CloudShare.addComment(cid, text.trim(), _profile.value.name, media, gif); loadComments(id) } }
+        findVideo(id)?.cloudId?.let { cid -> viewModelScope.launch(Dispatchers.IO) { CloudShare.addComment(cid, text.trim(), _profile.value.name, media, gif, video); loadComments(id) } }
         val me = _profile.value.name
-        val c = Comment(me, text.trim(), System.nanoTime(), System.currentTimeMillis(), media = media, gif = gif)
+        val c = Comment(me, text.trim(), System.nanoTime(), System.currentTimeMillis(), media = media, gif = gif, video = video)
         val owner = _videos.value.firstOrNull { it.id == id }?.user ?: ""
         mutate(id) { it.copy(comments = it.comments + c) }
         addEvent("You commented on @$owner's post: " + c.text.take(60), 2, id)
@@ -893,17 +893,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
-    /** Test coins. Real purchases will be connected later. */
-    fun addCoins(n: Int) {
-        _settings.update { it.copy(coins = it.coins + n) }
-        persist()
-    }
-
     fun spendCoins(n: Int): Boolean {
         if (_settings.value.coins < n) return false
         _settings.update { it.copy(coins = it.coins - n) }
         persist()
+        // signed-in accounts spend from the server wallet; the live balance then corrects the number
+        if (Cloud.online()) viewModelScope.launch(Dispatchers.IO) { CloudPay.spend(n) }
         return true
+    }
+
+    private var walletReg: com.google.firebase.firestore.ListenerRegistration? = null
+    private val _trialUntil = MutableStateFlow(0L)
+    /** End of the free first week of Premium (from the server clock), or 0. */
+    val trialUntil: StateFlow<Long> = _trialUntil.asStateFlow()
+    private val _paid = MutableStateFlow(false)
+    /** True when Premium was bought through Google Play. */
+    val paidPremium: StateFlow<Boolean> = _paid.asStateFlow()
+
+    /** Premium is on when it was paid for, or during the free first week of a new account. Nothing else turns it on. */
+    private fun applyPremium() {
+        val on = _paid.value || System.currentTimeMillis() < _trialUntil.value
+        if (on != _settings.value.premium) setPremium(on)
+    }
+
+    /** Follows the server wallet: coins and Premium come from Google Play purchases checked by the server. */
+    fun startWallet() {
+        if (!Cloud.online() || walletReg != null) return
+        walletReg = CloudPay.listenWallet(
+            onCoins = { c -> _settings.update { it.copy(coins = c) } },
+            onPremium = { p -> _paid.value = p; applyPremium() }
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val t = CloudPay.createdAt()
+            if (t > 0L) _trialUntil.value = t + 7L * 24 * 60 * 60 * 1000
+            applyPremium()
+        }
     }
 
     fun updateSettings(f: (AppSettings) -> AppSettings) {
@@ -970,6 +994,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             Cloud.cancelPending()
             if (Cloud.online()) Cloud.pushState(buildJson().toString())
+            walletReg?.remove()
+            walletReg = null
             Auth.provider.signOut()
             Cloud.forget()
             wipeLocal()
