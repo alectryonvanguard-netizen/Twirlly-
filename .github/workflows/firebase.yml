@@ -1,0 +1,28 @@
+
+name: Deploy to Firebase
+
+on:
+  push:
+    branches: [ main, master ]
+    paths: [ "web/**", "functions/**", "firebase/**", "firebase.json", ".firebaserc", ".github/workflows/firebase.yml" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install functions
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+      - name: Save the key
+        env:
+          KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$KEY" > "$RUNNER_TEMP/key.json"
+      - name: Deploy
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/key.json
+        run: npx --yes firebase-tools@latest deploy --only hosting,functions,firestore:rules,storage --project twirlly-75313 --non-interactive
