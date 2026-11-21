@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.example.twirlly",
+    "sha256_cert_fingerprints": ["A2:E4:48:60:76:72:A7:2C:68:B4:F8:9C:C0:5A:29:35:11:CF:65:B0:A8:7B:36:91:4A:AB:DF:39:25:1C:1E:88"]
+  }
+}]
