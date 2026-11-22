@@ -1,4 +1,3 @@
-
 name: Deploy to Firebase
 
 on:
@@ -25,4 +24,4 @@ jobs:
       - name: Deploy
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/key.json
-        run: npx --yes firebase-tools@latest deploy --only hosting,functions,firestore:rules,storage --project twirlly-75313 --non-interactive
+        run: npx --yes firebase-tools@latest deploy --only hosting,functions,firestore:rules --project twirlly-75313 --non-interactive
