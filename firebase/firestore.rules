@@ -67,3 +67,61 @@ service cloud.firestore {
     match /usernames/{name} {
       allow read: if confirmed();
       allow create: if confirmed() && name.matches('^[a-z0-9_.]{3,24}$')
+          && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == request.auth.uid;
+      allow update: if false;
+      allow delete: if confirmed() && resource.data.uid == request.auth.uid;
+    }
+
+    // ---------- shared posts ----------
+    function likePath(postId) {
+      return /databases/$(database)/documents/posts/$(postId)/likes/$(request.auth.uid);
+    }
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    match /posts/{postId} {
+      allow read: if confirmed();
+      allow create: if confirmed() && request.resource.data.uid == request.auth.uid
+          && request.resource.data.likesCount == 0 && request.resource.data.commentsCount == 0
+          && request.resource.data.caption is string && request.resource.data.caption.size() <= 600
+          && request.resource.data.project is string && request.resource.data.project.size() < 200000;
+      allow update: if confirmed() && (
+          (resource.data.uid == request.auth.uid && onlyChanges(['caption']))
+          || (onlyChanges(['likesCount']) && (
+                (!exists(likePath(postId)) && existsAfter(likePath(postId)) && request.resource.data.likesCount == resource.data.likesCount + 1)
+             || (exists(likePath(postId)) && !existsAfter(likePath(postId)) && request.resource.data.likesCount == resource.data.likesCount - 1)))
+          || (onlyChanges(['commentsCount']) && (request.resource.data.commentsCount == resource.data.commentsCount + 1
+                || request.resource.data.commentsCount == resource.data.commentsCount - 1)));
+      allow delete: if confirmed() && resource.data.uid == request.auth.uid;
+
+      match /likes/{uid} {
+        allow read: if confirmed();
+        allow create, delete: if confirmed() && request.auth.uid == uid;
+      }
+      match /comments/{cid} {
+        allow read: if confirmed();
+        allow create: if confirmed() && request.resource.data.uid == request.auth.uid
+            && request.resource.data.text is string && request.resource.data.text.size() <= 3000
+            && (request.resource.data.text.size() > 0 || request.resource.data.get('media', '') != '')
+            && (request.resource.data.get('media', '') == '' || request.resource.data.media.matches('^(https://.{1,480}|anim:.{1,16})$'));
+        allow delete: if confirmed() && (resource.data.uid == request.auth.uid
+            || get(/databases/$(database)/documents/posts/$(postId)).data.uid == request.auth.uid);
+      }
+    }
+
+    match /follows/{id} {
+      allow read: if confirmed();
+      allow create: if confirmed() && request.resource.data.follower == request.auth.uid
+          && request.resource.data.follower != request.resource.data.following
+          && id == request.auth.uid + '_' + request.resource.data.following;
+      allow delete: if confirmed() && resource.data.follower == request.auth.uid;
+    }
+
+    // reports are write-only for people; your moderation tools read them with admin access
+    match /reports/{id} {
+      allow create: if confirmed() && request.resource.data.reporter == request.auth.uid;
+    }
+  }
+}
+
